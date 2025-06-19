@@ -1,7 +1,13 @@
-import Homepage from './pages/Homepage'
+import { Outlet } from 'react-router-dom';
 
 function App() {
-  return <Homepage />
+  // This component now just provides a container,
+  // and <Outlet /> renders the current page's component.
+  return (
+    <div>
+      <Outlet />
+    </div>
+  );
 }
 
-export default App
+export default App;

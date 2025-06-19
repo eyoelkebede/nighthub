@@ -5,16 +5,18 @@
   "main": "index.js",
   "scripts": {
     "build": "tsc",
-    "dev": "ts-node-dev src/index.ts",
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "start": "node dist/index.js",
+    "dev": "ts-node-dev src/index.ts"
   },
   "keywords": [],
   "author": "",
   "license": "ISC",
   "dependencies": {
+    "@types/ws": "^8.18.1",
     "cors": "^2.8.5",
     "dotenv": "^16.5.0",
-    "express": "^5.1.0"
+    "express": "^5.1.0",
+    "ws": "^8.18.2"
   },
   "devDependencies": {
     "@types/cors": "^2.8.19",
