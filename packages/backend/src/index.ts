@@ -25,25 +25,32 @@ const checkForMatch = (mode: 'safe' | 'nsfw') => {
     const queue = mode === 'safe' ? safeQueue : nsfwQueue;
     console.log(`Checking for match in ${mode} queue. Size: ${queue.length}`);
     
-    // If there are at least two people, we have a match!
     if (queue.length >= 2) {
-        // Pull the first two users from the front of the queue
         const user1 = queue.shift()!;
         const user2 = queue.shift()!;
 
         const user1Info = clients.get(user1)!;
         const user2Info = clients.get(user2)!;
 
-        // Create a unique room ID for their private chat
         const roomId = uuidv4();
 
         console.log(`✅ Match found! Room: ${roomId}, Users: ${user1Info.id}, ${user2Info.id}`);
 
-        // Tell both users they've been matched and what their room ID is
-        user1.send(JSON.stringify({ type: 'matchFound', payload: { roomId } }));
-        user2.send(JSON.stringify({ type: 'matchFound', payload: { roomId } }));
+        // --- ADDED CHECKS HERE ---
+        // Before sending, ensure the client's connection is still open.
+        if (user1.readyState === WebSocket.OPEN) {
+            user1.send(JSON.stringify({ type: 'matchFound', payload: { roomId } }));
+        } else {
+            console.log(`Could not send match to ${user1Info.id}, connection was not open.`);
+        }
+        
+        if (user2.readyState === WebSocket.OPEN) {
+            user2.send(JSON.stringify({ type: 'matchFound', payload: { roomId } }));
+        } else {
+            console.log(`Could not send match to ${user2Info.id}, connection was not open.`);
+        }
 
-        // IMPORTANT: Update the queue positions for everyone who is still waiting
+        // Update the queue positions for everyone who is still waiting
         broadcastQueueUpdates(mode);
     }
 };
