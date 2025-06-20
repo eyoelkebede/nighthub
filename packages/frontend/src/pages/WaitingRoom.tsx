@@ -4,15 +4,10 @@ import { useWebSocket } from '../context/WebSocketProvider';
 import { v4 as uuidv4 } from 'uuid';
 
 // --- Types ---
-interface ChatMessage {
-    senderId: string;
-    username: string;
-    message: string;
-}
-interface SystemMessage {
-    text: string;
-}
-type Message = (ChatMessage & { type: 'chat' }) | (SystemMessage & { type: 'system' });
+interface ChatMessage { senderId: string; username: string; message: string; }
+interface BotMessage { botName: string; message: string; }
+type Message = (ChatMessage & { type: 'chat' }) | (BotMessage & { type: 'bot' });
+
 
 // --- Helper for Random Usernames ---
 const adjectives = ['Cosmic', 'Witty', 'Silent', 'Golden', 'Cyber', 'Neon', 'Lunar', 
@@ -38,68 +33,16 @@ const WaitingRoom: React.FC = () => {
     const [searchParams] = useSearchParams();
     const navigate = useNavigate();
     const { lastMessage, sendMessage, isConnected } = useWebSocket();
-
     const mode = searchParams.get('mode') || 'safe';
     const [queuePosition, setQueuePosition] = useState<number | string>('...');
     const [queueTotal, setQueueTotal] = useState<number | string>('...');
     const [statusMessage, setStatusMessage] = useState('Connecting...');
-
-    // --- State and Refs for new features ---
     const [messages, setMessages] = useState<Message[]>([]);
     const [chatInput, setChatInput] = useState('');
-    const [showInactivityModal, setShowInactivityModal] = useState(false);
-    // NEW: State to handle the pre-connection animation
-    const [isConnecting, setIsConnecting] = useState(false);
-
     const username = useMemo(() => generateRandomUsername(), []);
     const myIdRef = useRef<string>(uuidv4());
     const messagesEndRef = useRef<HTMLDivElement>(null);
-
-    // Refs to hold the timer IDs
-    const inactivityTimerRef = useRef<NodeJS.Timeout>();
-    const finalCountdownTimerRef = useRef<NodeJS.Timeout>();
-
-    // --- Logic for Inactivity Timer ---
-    const handleUserActivity = useCallback(() => {
-        // Any activity hides the modal and resets the main timer.
-        setShowInactivityModal(false);
-        clearTimeout(inactivityTimerRef.current);
-        inactivityTimerRef.current = setTimeout(() => {
-            console.log("User inactive, showing modal.");
-            setShowInactivityModal(true);
-        }, 60 * 1000); // 60 seconds
-    }, []);
-
-    // This effect runs when the inactivity modal appears to start the final countdown.
-    useEffect(() => {
-        if (showInactivityModal) {
-            finalCountdownTimerRef.current = setTimeout(() => {
-                console.log("User did not respond to modal. Disconnecting by navigating home.");
-                navigate('/'); 
-            }, 15 * 1000); // 15 seconds to respond
-        }
-        // Cleanup the final countdown if the user becomes active again
-        return () => clearTimeout(finalCountdownTimerRef.current);
-    }, [showInactivityModal, navigate]);
-
-
-    // Effect to set up and tear down global event listeners for user activity
-    useEffect(() => {
-        handleUserActivity(); // Start the timer on component mount
-        window.addEventListener('mousemove', handleUserActivity);
-        window.addEventListener('keypress', handleUserActivity);
-        window.addEventListener('click', handleUserActivity);
-
-        return () => {
-            clearTimeout(inactivityTimerRef.current);
-            clearTimeout(finalCountdownTimerRef.current);
-            window.removeEventListener('mousemove', handleUserActivity);
-            window.removeEventListener('keypress', handleUserActivity);
-            window.removeEventListener('click', handleUserActivity);
-        };
-    }, [handleUserActivity]);
     
-    // --- WebSocket and Message Logic ---
     useEffect(() => {
         if (isConnected) {
             sendMessage(JSON.stringify({ type: 'joinQueue', payload: { mode } }));
@@ -115,16 +58,11 @@ const WaitingRoom: React.FC = () => {
                     setStatusMessage('Searching for a partner...');
                     break;
                 case 'matchFound':
-                    // NEW: Start the connection animation instead of navigating immediately
-                    setStatusMessage(`Match Found! Connecting...`);
-                    setIsConnecting(true);
-                    // Navigate to the chat room after a 5-second delay
-                    setTimeout(() => {
-                        navigate(`/chat/${lastMessage.payload.roomId}?mode=${mode}`);
-                    }, 5000); // 5 seconds
+                    navigate(`/chat/${lastMessage.payload.roomId}?mode=${mode}`);
                     break;
                 case 'waitingRoomChat':
-                    setMessages(prev => [...prev, { ...lastMessage.payload, type: 'chat' }]);
+                case 'botMessage':
+                    setMessages(prev => [...prev, { ...lastMessage.payload, type: lastMessage.type === 'botMessage' ? 'bot' : 'chat' }]);
                     break;
             }
         }
@@ -144,50 +82,17 @@ const WaitingRoom: React.FC = () => {
         }
     };
 
-    // --- JSX including the new Modals ---
     return (
-        <div className="bg-gray-900 text-white min-h-screen flex flex-col md:flex-row font-sans relative">
-            {/* Connecting... Overlay */}
-            {isConnecting && (
-                <div 
-                    className={`absolute inset-0 flex flex-col items-center justify-center z-50 transition-opacity duration-500
-                                bg-black bg-opacity-90 animate-pulse
-                                border-8 ${mode === 'safe' ? 'border-green-500' : 'border-red-500'}`}
-                >
-                    <h2 className="text-4xl font-bold">Match Found!</h2>
-                    <p className="mt-4 text-lg text-gray-300">Connecting you to your partner...</p>
-                </div>
-            )}
-            
-            {/* Inactivity Modal Overlay */}
-            {showInactivityModal && (
-                <div className="absolute inset-0 bg-black bg-opacity-80 flex flex-col items-center justify-center z-40 p-4 text-center">
-                    <h2 className="text-4xl font-bold">Are you still there?</h2>
-                    <p className="mt-4 text-lg text-gray-300">Click the button below to stay in the queue.</p>
-                    <button 
-                        onClick={handleUserActivity} // Clicking the button is activity
-                        className="mt-8 bg-blue-600 text-white font-bold py-4 px-10 rounded-full hover:bg-blue-700 transition-colors text-xl"
-                    >
-                        I'm Still Here!
-                    </button>
-                    <p className="mt-4 text-sm text-gray-500">You will be disconnected otherwise.</p>
-                </div>
-            )}
-
-            {/* Left Panel: Queue Status */}
+        <div className="bg-gray-900 text-white min-h-screen flex flex-col md:flex-row font-sans">
             <div className="w-full md:w-1/3 flex flex-col items-center justify-center p-8 border-b-2 md:border-b-0 md:border-r-2 border-gray-800">
                 <h1 className="text-4xl font-bold uppercase tracking-wider text-green-400">WAITING ROOM</h1>
                 <p className="mt-4 text-lg text-gray-400">{statusMessage}</p>
                 <div className="mt-12 w-20 h-20 border-4 border-dashed rounded-full animate-spin border-green-400"></div>
                 <p className="mt-12 text-md text-gray-500">Your Position in Queue</p>
                 <div className="mt-2 text-4xl font-bold">
-                    <span className="text-white">{queuePosition}</span>
-                    <span className="text-gray-600 mx-2">/</span>
-                    <span className="text-gray-400">{queueTotal}</span>
+                    <span className="text-white">{queuePosition}</span><span className="text-gray-600 mx-2">/</span><span className="text-gray-400">{queueTotal}</span>
                 </div>
             </div>
-
-            {/* Right Panel: Group Chat */}
             <div className="flex-1 flex flex-col bg-gray-800">
                 <header className="p-4 border-b border-gray-700 text-center">
                     <h2 className="text-lg font-semibold">Waiting Room Group Chat ({mode} mode)</h2>
@@ -195,15 +100,23 @@ const WaitingRoom: React.FC = () => {
                 </header>
                 <main className="flex-1 p-4 overflow-y-auto space-y-4">
                     {messages.map((msg, index) => {
-                        if (msg.type === 'system') return <p key={index} className="text-center w-full text-sm text-yellow-400 italic">{msg.text}</p>;
+                        if (msg.type === 'bot') {
+                            return (
+                                <div key={index} className="flex items-start space-x-3 my-4">
+                                    <div className="flex-shrink-0 w-10 h-10 rounded-full bg-teal-500 flex items-center justify-center font-bold text-gray-900 text-sm">BOT</div>
+                                    <div className="bg-gray-700 p-3 rounded-lg rounded-bl-none">
+                                        <p className="font-bold text-teal-300">{msg.botName}</p>
+                                        <p className="text-white italic">{msg.message}</p>
+                                    </div>
+                                </div>
+                            );
+                        }
                         const isMe = msg.senderId === myIdRef.current;
                         return (
                             <div key={index} className={`flex items-end ${isMe ? 'justify-end' : 'justify-start'}`}>
                                 <div className={`flex flex-col space-y-1 text-sm max-w-xs mx-2 order-2 ${isMe ? 'items-end' : 'items-start'}`}>
                                     {!isMe && <span className="text-xs text-gray-400">{msg.username}</span>}
-                                    <p className={`px-4 py-2 rounded-2xl inline-block ${isMe ? 'bg-blue-600 text-white rounded-br-none' : 'bg-gray-700 text-gray-100 rounded-bl-none'}`}>
-                                        {msg.message}
-                                    </p>
+                                    <p className={`px-4 py-2 rounded-2xl inline-block ${isMe ? 'bg-blue-600 text-white rounded-br-none' : 'bg-gray-700 text-gray-100 rounded-bl-none'}`}>{msg.message}</p>
                                 </div>
                             </div>
                         );
@@ -212,14 +125,7 @@ const WaitingRoom: React.FC = () => {
                 </main>
                 <footer className="p-4 border-t border-gray-700">
                     <div className="flex items-center">
-                        <input
-                            type="text"
-                            value={chatInput}
-                            onChange={(e) => setChatInput(e.target.value)}
-                            onKeyPress={(e) => e.key === 'Enter' && handleSendChatMessage()}
-                            className="flex-1 bg-gray-700 border-gray-600 rounded-l-full py-2 px-4 focus:outline-none focus:ring-2 focus:ring-blue-500 text-white"
-                            placeholder="Chat with everyone in the waiting room..."
-                        />
+                        <input type="text" value={chatInput} onChange={(e) => setChatInput(e.target.value)} onKeyPress={(e) => e.key === 'Enter' && handleSendChatMessage()} className="flex-1 bg-gray-700 border-gray-600 rounded-l-full py-2 px-4 focus:outline-none focus:ring-2 focus:ring-blue-500 text-white" placeholder="Chat with everyone..."/>
                         <button onClick={handleSendChatMessage} className="bg-blue-600 text-white font-bold p-3 rounded-r-full hover:bg-blue-700 transition-colors">
                             <svg className="w-6 h-6" fill="currentColor" viewBox="0 0 20 20"><path d="M10.894 2.553a1 1 0 00-1.788 0l-7 14a1 1 0 001.169 1.409l5-1.429A1 1 0 009 15.571V11a1 1 0 112 0v4.571a1 1 0 00.725.962l5 1.428a1 1 0 001.17-1.408l-7-14z" /></svg>
                         </button>
