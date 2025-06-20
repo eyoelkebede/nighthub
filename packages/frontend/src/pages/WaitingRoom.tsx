@@ -1,7 +1,7 @@
 import React, { useEffect, useState, useMemo, useRef } from 'react';
 import { useSearchParams, useNavigate } from 'react-router-dom';
 import { useWebSocket } from '../context/WebSocketProvider';
-import { v4 as uuidv4 } from 'uuid'; // <-- ADD THIS LINE
+import { v4 as uuidv4 } from 'uuid';
 
 // --- Types ---
 interface ChatMessage {
@@ -29,7 +29,7 @@ const WaitingRoom: React.FC = () => {
     const mode = searchParams.get('mode') || 'safe';
     const [queuePosition, setQueuePosition] = useState<number | string>('...');
     const [queueTotal, setQueueTotal] = useState<number | string>('...');
-    const [statusMessage, setStatusMessage] = useState('Connecting...');
+    const [statusMessage, setStatusMessage] = useState('Connecting to server...');
 
     // --- State for new features ---
     const [messages, setMessages] = useState<Message[]>([]);
@@ -37,16 +37,18 @@ const WaitingRoom: React.FC = () => {
     const [showInactivityModal, setShowInactivityModal] = useState(false);
 
     const username = useMemo(() => generateRandomUsername(), []);
-    const myIdRef = useRef<string>(uuidv4());
+    // A stable ID for this user's session, used to identify 'me' in chat
+    const myIdRef = useRef<string>(uuidv4()); 
     const inactivityTimerRef = useRef<NodeJS.Timeout>();
     const messagesEndRef = useRef<HTMLDivElement>(null);
     
     // --- Logic for Inactivity Timer ---
     const resetInactivityTimer = () => {
         clearTimeout(inactivityTimerRef.current);
+        // Set a timer for 1 minute.
         inactivityTimerRef.current = setTimeout(() => {
             setShowInactivityModal(true);
-        }, 60 * 1000);
+        }, 60 * 1000); 
     };
 
     useEffect(() => {
@@ -107,10 +109,80 @@ const WaitingRoom: React.FC = () => {
         }
     };
 
-    // --- JSX ---
     return (
         <div className="bg-gray-900 text-white min-h-screen flex flex-col md:flex-row font-sans">
-            {/* ... JSX is unchanged ... */}
+            {/* Inactivity Modal */}
+            {showInactivityModal && (
+                <div className="absolute inset-0 bg-black bg-opacity-75 flex flex-col items-center justify-center z-50 p-4">
+                    <h2 className="text-3xl font-bold">Are you still there?</h2>
+                    <p className="mt-2 text-gray-300">Click the button to stay in the queue.</p>
+                    <button 
+                        onClick={() => {
+                            setShowInactivityModal(false);
+                            resetInactivityTimer();
+                        }}
+                        className="mt-6 bg-blue-600 text-white font-bold py-3 px-8 rounded-full hover:bg-blue-700 transition-colors text-lg"
+                    >
+                        I'm Here!
+                    </button>
+                </div>
+            )}
+
+            {/* Left Panel: Queue Status */}
+            <div className="w-full md:w-1/3 flex flex-col items-center justify-center p-8 border-b-2 md:border-b-0 md:border-r-2 border-gray-800">
+                <h1 className="text-4xl font-bold uppercase tracking-wider text-green-400">WAITING ROOM</h1>
+                <p className="mt-4 text-lg text-gray-400">{statusMessage}</p>
+                <div className="mt-12 w-20 h-20 border-4 border-dashed rounded-full animate-spin border-green-400"></div>
+                <p className="mt-12 text-md text-gray-500">Your Position in Queue</p>
+                <div className="mt-2 text-4xl font-bold">
+                    <span className="text-white">{queuePosition}</span>
+                    <span className="text-gray-600 mx-2">/</span>
+                    <span className="text-gray-400">{queueTotal}</span>
+                </div>
+            </div>
+
+            {/* Right Panel: Group Chat */}
+            <div className="flex-1 flex flex-col bg-gray-800">
+                <header className="p-4 border-b border-gray-700 text-center">
+                    <h2 className="text-lg font-semibold">Waiting Room Group Chat</h2>
+                    <p className="text-sm text-gray-400">You are: <span className="font-bold text-teal-400">{username}</span></p>
+                </header>
+                <main className="flex-1 p-4 overflow-y-auto space-y-4">
+                    {messages.map((msg, index) => {
+                        if (msg.type === 'system') {
+                            return <p key={index} className="text-center w-full text-sm text-yellow-400 italic">{msg.text}</p>;
+                        }
+                        // Use the stable ref ID to check if the message is from the current user
+                        const isMe = msg.senderId === myIdRef.current;
+                        return (
+                            <div key={index} className={`flex items-end ${isMe ? 'justify-end' : 'justify-start'}`}>
+                                <div className={`flex flex-col space-y-1 text-sm max-w-xs mx-2 order-2 ${isMe ? 'items-end' : 'items-start'}`}>
+                                    {!isMe && <span className="text-xs text-gray-400">{msg.username}</span>}
+                                    <p className={`px-4 py-2 rounded-2xl inline-block ${isMe ? 'bg-blue-600 text-white rounded-br-none' : 'bg-gray-700 text-gray-100 rounded-bl-none'}`}>
+                                        {msg.message}
+                                    </p>
+                                </div>
+                            </div>
+                        );
+                    })}
+                     <div ref={messagesEndRef} />
+                </main>
+                <footer className="p-4 border-t border-gray-700">
+                    <div className="flex items-center">
+                        <input
+                            type="text"
+                            value={chatInput}
+                            onChange={(e) => setChatInput(e.target.value)}
+                            onKeyPress={(e) => e.key === 'Enter' && handleSendChatMessage()}
+                            className="flex-1 bg-gray-700 border-gray-600 rounded-l-full py-2 px-4 focus:outline-none focus:ring-2 focus:ring-blue-500 text-white"
+                            placeholder="Chat with everyone in the waiting room..."
+                        />
+                        <button onClick={handleSendChatMessage} className="bg-blue-600 text-white font-bold p-3 rounded-r-full hover:bg-blue-700 transition-colors">
+                            <svg className="w-6 h-6" fill="currentColor" viewBox="0 0 20 20"><path d="M10.894 2.553a1 1 0 00-1.788 0l-7 14a1 1 0 001.169 1.409l5-1.429A1 1 0 009 15.571V11a1 1 0 112 0v4.571a1 1 0 00.725.962l5 1.428a1 1 0 001.17-1.408l-7-14z" /></svg>
+                        </button>
+                    </div>
+                </footer>
+            </div>
         </div>
     );
 };
