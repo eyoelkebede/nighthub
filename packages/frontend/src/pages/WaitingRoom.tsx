@@ -15,8 +15,21 @@ interface SystemMessage {
 type Message = (ChatMessage & { type: 'chat' }) | (SystemMessage & { type: 'system' });
 
 // --- Helper for Random Usernames ---
-const adjectives = ['Cosmic', 'Witty', 'Silent', 'Golden', 'Cyber', 'Neon', 'Lunar'];
-const nouns = ['Fox', 'Panda', 'Rider', 'Ghost', 'Dragon', 'Ninja', 'Wizard'];
+const adjectives = ['Cosmic', 'Witty', 'Silent', 'Golden', 'Cyber', 'Neon', 'Lunar', 
+  'Electric', 'Shadow', 'Crimson', 'Frozen', 'Iron', 'Rapid', 'Sapphire', 'Mystic', 'Vivid', 'Obsidian', 'Stealthy', 'Radiant', 'Blazing', 'Stormy',
+  'Quantum', 'Fierce', 'Silent', 'Echoing', 'Jaded', 'Twilight', 'Velvet',
+  'Savage', 'Chrome', 'Nova', 'Icy', 'Solar', 'Enchanted', 'Hollow', 'Burning',
+  'Celestial', 'Phantom', 'Arcane', 'Titan', 'Vortex', 'Nebula', 'Spectral', 'Glacial',
+  'Thunderous', 'Mystical', 'Abyssal', 'Galactic', 'Radiant', 'Infernal', 'Ethereal', 'Cobalt', 'Emerald', 'Onyx'];
+const nouns = ['Fox', 'Panda', 'Rider', 'Ghost', 'Dragon', 'Ninja', 'Wizard'
+  , 'Knight', 'Hunter', 'Raven', 'Tiger', 'Wolf', 'Phoenix', 'Viper', 'Falcon',
+  'Shark', 'Bear', 'Eagle', 'Lion', 'Panther', 'Cobra', 'Jaguar', 'Leopard',
+  'Griffin', 'Mantis', 'Scorpion', 'Crab', 'Owl', 'Hawk', 'Bison', 'Rhino',
+  'Stingray', 'Wolf', 'Viper', 'Samurai', 'Phoenix', 'Titan', 'Falcon', 'Reaper',
+  'Knight', 'Specter', 'Hunter', 'Rogue', 'Siren', 'Golem', 'Warden',
+  'Ronin', 'Jaguar', 'Druid', 'Glitch', 'Raven', 'Monk', 'Demon', 'Sentinel',
+  'Griffin', 'Sniper', 'Nomad', 'Berserker', 'Oracle', 'Hawk', 'Drone', 'Mage'
+];
 const generateRandomUsername = () => `${adjectives[Math.floor(Math.random() * adjectives.length)]} ${nouns[Math.floor(Math.random() * nouns.length)]}`;
 
 
