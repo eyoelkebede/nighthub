@@ -5,112 +5,87 @@ import http from 'http';
 import { WebSocketServer, WebSocket } from 'ws';
 import { v4 as uuidv4 } from 'uuid';
 
+// Extend the WebSocket type to include our custom properties
+interface ExtendedWebSocket extends WebSocket {
+  id: string;
+}
+
 dotenv.config();
 
 const app = express();
 const port = process.env.PORT || 8080;
 
-// Standard HTTP Server Middleware
 app.use(cors());
 app.use(express.json());
 
-// Create the main HTTP server from our Express app
 const server = http.createServer(app);
-// Attach the WebSocket server to the HTTP server
 const wss = new WebSocketServer({ server });
 
-// --- In-Memory Data Stores ---
-// We store info about every connected client
-const clients = new Map<WebSocket, { id: string; mode?: 'safe' | 'nsfw'; readyForVideo?: boolean }>();
-// Queues for waiting users
-const safeQueue: WebSocket[] = [];
-const nsfwQueue: WebSocket[] = [];
-// Map of active chat rooms
-const rooms = new Map<string, WebSocket[]>();
+// --- Refactored In-Memory Data Stores ---
+// The main lookup for clients. Key: clientId (string), Value: The WebSocket connection object.
+const clients = new Map<string, ExtendedWebSocket>();
+// The queues now store the string IDs of the clients, not the full objects.
+const safeQueue: string[] = [];
+const nsfwQueue: string[] = [];
+// Rooms also store client IDs. Key: roomId, Value: array of 2 client IDs.
+const rooms = new Map<string, string[]>();
 
 // --- Helper Functions ---
 
 /**
- * Finds the partner of a given user in a chat room.
- * @param ws The WebSocket connection of the user.
- * @returns The WebSocket connection of the partner, or null if not found.
+ * Finds the partner's ID for a given user.
+ * @param clientId The ID of the user.
+ * @returns The ID of the partner, or null if not found.
  */
-const getPartner = (ws: WebSocket): WebSocket | null => {
-    for (const users of rooms.values()) {
-        if (users.includes(ws)) {
-            return users.find(user => user !== ws) || null;
+const getPartnerId = (clientId: string): string | null => {
+    for (const userIds of rooms.values()) {
+        if (userIds.includes(clientId)) {
+            return userIds.find(id => id !== clientId) || null;
         }
     }
     return null;
 }
 
-// A new, more robust function to handle matches
+/**
+ * Checks a queue for a potential match and initiates it.
+ * @param mode The queue to check ('safe' or 'nsfw').
+ */
 const checkForMatch = (mode: 'safe' | 'nsfw') => {
     const queue = mode === 'safe' ? safeQueue : nsfwQueue;
     console.log(`Checking for match in ${mode} queue. Current size: ${queue.length}`);
 
     while (queue.length >= 2) {
-        // Pull the first two users from the front of the queue
-        const user1 = queue.shift()!;
-        const user2 = queue.shift()!;
+        const user1Id = queue.shift()!;
+        const user2Id = queue.shift()!;
 
-        const user1Info = clients.get(user1);
-        const user2Info = clients.get(user2);
-
-        // If for any reason we can't find their info, skip
-        if (!user1Info || !user2Info) {
-            console.error("Could not find client info for a matched user. Skipping match.");
-            continue; // check the queue again
+        const user1Ws = clients.get(user1Id);
+        const user2Ws = clients.get(user2Id);
+        
+        // Ensure both clients are still connected before creating the room
+        if (!user1Ws || !user2Ws) {
+            console.error("A matched user disconnected before room creation. Re-queuing the other if they exist.");
+            // If one user disconnected, put the other one back at the front of the queue
+            if(user1Ws) queue.unshift(user1Id);
+            if(user2Ws) queue.unshift(user2Id);
+            return;
         }
 
-        // Create a unique room ID for their private chat
         const roomId = uuidv4();
+        rooms.set(roomId, [user1Id, user2Id]);
 
-        // Immediately mark these users as no longer in a queue or ready for video,
-        // so they can't be part of any other logic accidentally.
-        user1Info.mode = undefined;
-        user2Info.mode = undefined;
-        user1Info.readyForVideo = false;
-        user2Info.readyForVideo = false;
+        console.log(`✅ Match found! Room: ${roomId}, Users: ${user1Id}, ${user2Id}`);
+        
+        const matchFoundPayload = JSON.stringify({ type: 'matchFound', payload: { roomId } });
 
-        // Create the room and add the users to it
-        rooms.set(roomId, [user1, user2]);
-
-        console.log(`✅ Match found! Room: ${roomId}, Users: ${user1Info.id}, ${user2Info.id}`);
-
-        // Tell both users they've been matched and what their room ID is
-        if (user1.readyState === WebSocket.OPEN) {
-            user1.send(JSON.stringify({ type: 'matchFound', payload: { roomId } }));
+        if (user1Ws.readyState === WebSocket.OPEN) {
+            user1Ws.send(matchFoundPayload);
         }
-        if (user2.readyState === WebSocket.OPEN) {
-            user2.send(JSON.stringify({ type: 'matchFound', payload: { roomId } }));
+        if (user2Ws.readyState === WebSocket.OPEN) {
+            user2Ws.send(matchFoundPayload);
         }
     }
-
-    // IMPORTANT: We only broadcast queue updates *after* all possible matches have been made.
+    // After all matches are made, update everyone still waiting
     broadcastQueueUpdates(mode);
-};
-
-/**
- * Sends a user their current position in the queue.
- * @param ws The user's WebSocket connection.
- */
-const sendQueueUpdate = (ws: WebSocket) => {
-  const clientInfo = clients.get(ws);
-  if (!clientInfo || !clientInfo.mode) return;
-
-  const queue = clientInfo.mode === 'safe' ? safeQueue : nsfwQueue;
-  const position = queue.indexOf(ws) + 1;
-
-  if (position > 0 && ws.readyState === WebSocket.OPEN) {
-    ws.send(JSON.stringify({
-      type: 'queueUpdate',
-      payload: {
-        position: position,
-        total: queue.length,
-      },
-    }));
-  }
 };
 
 /**
@@ -119,70 +94,68 @@ const sendQueueUpdate = (ws: WebSocket) => {
  */
 const broadcastQueueUpdates = (mode: 'safe' | 'nsfw') => {
     const queue = mode === 'safe' ? safeQueue : nsfwQueue;
-    queue.forEach(ws => sendQueueUpdate(ws));
+    queue.forEach((clientId, index) => {
+        const ws = clients.get(clientId);
+        if (ws && ws.readyState === WebSocket.OPEN) {
+            ws.send(JSON.stringify({
+              type: 'queueUpdate',
+              payload: {
+                position: index + 1,
+                total: queue.length,
+              },
+            }));
+        }
+    });
 };
 
 // --- Main WebSocket Server Logic ---
 
 wss.on('connection', (ws: WebSocket) => {
-  // When a new user connects, assign them a unique ID and mark them as not ready for video
   const clientId = uuidv4();
-  clients.set(ws, { id: clientId, readyForVideo: false });
+  // Attach the ID directly to the WebSocket object for easy access
+  (ws as ExtendedWebSocket).id = clientId;
+  // Store the client by its ID
+  clients.set(clientId, ws as ExtendedWebSocket);
   console.log(`✅ Client connected: ${clientId}`);
 
-  // Handle incoming messages from this specific client
   ws.on('message', (message) => {
     try {
       const parsedMessage = JSON.parse(message.toString());
-      const clientInfo = clients.get(ws);
-      if (!clientInfo) return;
+      const senderId = (ws as ExtendedWebSocket).id;
 
       // Handle user joining a queue
       if (parsedMessage.type === 'joinQueue' && parsedMessage.payload.mode) {
         const mode = parsedMessage.payload.mode;
-        clientInfo.mode = mode;
         const queue = mode === 'safe' ? safeQueue : nsfwQueue;
-        queue.push(ws);
-        broadcastQueueUpdates(mode);
+        queue.push(senderId);
         checkForMatch(mode);
       }
 
       // Handle incoming text chat messages
       if (parsedMessage.type === 'chatMessage' && parsedMessage.payload.message) {
-        const partner = getPartner(ws);
-        if (partner && partner.readyState === WebSocket.OPEN) {
-          partner.send(JSON.stringify({
-            type: 'chatMessage',
-            payload: { sender: 'partner', message: parsedMessage.payload.message },
-          }));
+        const partnerId = getPartnerId(senderId);
+        if (partnerId) {
+            const partnerWs = clients.get(partnerId);
+            if (partnerWs && partnerWs.readyState === WebSocket.OPEN) {
+              partnerWs.send(JSON.stringify({
+                type: 'chatMessage',
+                payload: { sender: 'partner', message: parsedMessage.payload.message },
+              }));
+            }
         }
       }
 
-      // Handle WebRTC signaling messages (offer, answer, ICE candidates)
-      if (parsedMessage.type.startsWith('webrtc-') && parsedMessage.type !== 'webrtc-ready') {
-          const partner = getPartner(ws);
-          if (partner && partner.readyState === WebSocket.OPEN) {
-              // Simply forward the signaling message to the partner
-              partner.send(JSON.stringify(parsedMessage));
-          }
-      }
-      
-      // Handle client indicating they are ready for video
-      if (parsedMessage.type === 'webrtc-ready') {
-          console.log(`Client ${clientInfo.id} is ready for video.`);
-          clientInfo.readyForVideo = true;
-          const partner = getPartner(ws);
-          const partnerInfo = partner ? clients.get(partner) : null;
-
-          // If their partner is also ready, tell this client (the second one to be ready) to create the offer
-          if (partner && partnerInfo?.readyForVideo) {
-              console.log(`Both clients are ready. Telling ${clientInfo.id} to create the offer.`);
-              if (ws.readyState === WebSocket.OPEN) {
-                  ws.send(JSON.stringify({ type: 'webrtc-create-offer' }));
+      // Handle WebRTC signaling
+      if (parsedMessage.type.startsWith('webrtc-')) {
+          const partnerId = getPartnerId(senderId);
+          if (partnerId) {
+              const partnerWs = clients.get(partnerId);
+              if (partnerWs && partnerWs.readyState === WebSocket.OPEN) {
+                  // Forward the original message to the partner
+                  partnerWs.send(JSON.stringify(parsedMessage));
               }
           }
       }
-
     } catch (error) {
       console.error('Failed to parse message or handle logic:', error);
     }
@@ -190,40 +163,46 @@ wss.on('connection', (ws: WebSocket) => {
 
   // Handle a client disconnecting
   ws.on('close', () => {
-    const clientInfo = clients.get(ws);
-    const clientId = clientInfo?.id || 'unknown';
+    const clientId = (ws as ExtendedWebSocket).id;
+    console.log(`❌ Client disconnected: ${clientId}`);
 
     // If the user was in a chat room, notify their partner and remove the room
-    const partner = getPartner(ws);
-    if (partner && partner.readyState === WebSocket.OPEN) {
-      partner.send(JSON.stringify({ type: 'partnerDisconnected' }));
-      for (const [roomId, users] of rooms.entries()) {
-          if (users.includes(ws)) {
+    const partnerId = getPartnerId(clientId);
+    if (partnerId) {
+        const partnerWs = clients.get(partnerId);
+        if (partnerWs && partnerWs.readyState === WebSocket.OPEN) {
+            partnerWs.send(JSON.stringify({ type: 'partnerDisconnected' }));
+        }
+        // Find and delete the room
+        for (const [roomId, users] of rooms.entries()) {
+          if (users.includes(clientId)) {
               rooms.delete(roomId);
               break;
           }
-      }
+        }
     }
     
     // Remove the user from any queue they were in
-    const safeIndex = safeQueue.indexOf(ws);
-    if (safeIndex > -1) {
-        safeQueue.splice(safeIndex, 1);
+    let queue = safeQueue;
+    let index = queue.indexOf(clientId);
+    if (index > -1) {
+        queue.splice(index, 1);
         broadcastQueueUpdates('safe');
-    }
-    const nsfwIndex = nsfwQueue.indexOf(ws);
-    if (nsfwIndex > -1) {
-        nsfwQueue.splice(nsfwIndex, 1);
-        broadcastQueueUpdates('nsfw');
+    } else {
+        queue = nsfwQueue;
+        index = queue.indexOf(clientId);
+        if (index > -1) {
+            queue.splice(index, 1);
+            broadcastQueueUpdates('nsfw');
+        }
     }
 
     // Clean up the main client list
-    clients.delete(ws);
-    console.log(`❌ Client disconnected: ${clientId}`);
+    clients.delete(clientId);
   });
 
   ws.on('error', (error) => {
-    console.error('WebSocket error for client:', clients.get(ws)?.id, error);
+    console.error('WebSocket error for client:', (ws as ExtendedWebSocket).id, error);
   });
 });
 
