@@ -3,29 +3,52 @@ import cors from 'cors';
 import dotenv from 'dotenv';
 import http from 'http';
 import { WebSocketServer, WebSocket } from 'ws';
-import { v4 as uuidv4 } from 'uuid'; // Import the UUID generator
+import { v4 as uuidv4 } from 'uuid';
 
 dotenv.config();
 
 const app = express();
 const port = process.env.PORT || 8080;
 
-// Middleware
 app.use(cors());
 app.use(express.json());
 
 const server = http.createServer(app);
 const wss = new WebSocketServer({ server });
 
-// --- In-memory data stores for our queues ---
-// We use a Map to store extended information about each WebSocket client
 const clients = new Map<WebSocket, { id: string; mode?: 'safe' | 'nsfw' }>();
 const safeQueue: WebSocket[] = [];
 const nsfwQueue: WebSocket[] = [];
 
-// --- Functions to manage queues and matching ---
+// --- NEW: Function to check for and handle matches ---
+const checkForMatch = (mode: 'safe' | 'nsfw') => {
+    const queue = mode === 'safe' ? safeQueue : nsfwQueue;
+    console.log(`Checking for match in ${mode} queue. Size: ${queue.length}`);
+    
+    // If there are at least two people, we have a match!
+    if (queue.length >= 2) {
+        // Pull the first two users from the front of the queue
+        const user1 = queue.shift()!;
+        const user2 = queue.shift()!;
 
-// Function to send a queue position update to a specific client
+        const user1Info = clients.get(user1)!;
+        const user2Info = clients.get(user2)!;
+
+        // Create a unique room ID for their private chat
+        const roomId = uuidv4();
+
+        console.log(`✅ Match found! Room: ${roomId}, Users: ${user1Info.id}, ${user2Info.id}`);
+
+        // Tell both users they've been matched and what their room ID is
+        user1.send(JSON.stringify({ type: 'matchFound', payload: { roomId } }));
+        user2.send(JSON.stringify({ type: 'matchFound', payload: { roomId } }));
+
+        // IMPORTANT: Update the queue positions for everyone who is still waiting
+        broadcastQueueUpdates(mode);
+    }
+};
+
+
 const sendQueueUpdate = (ws: WebSocket) => {
   const clientInfo = clients.get(ws);
   if (!clientInfo || !clientInfo.mode) return;
@@ -44,16 +67,12 @@ const sendQueueUpdate = (ws: WebSocket) => {
   }
 };
 
-// Function to broadcast queue updates to everyone in a specific queue
 const broadcastQueueUpdates = (mode: 'safe' | 'nsfw') => {
     const queue = mode === 'safe' ? safeQueue : nsfwQueue;
     queue.forEach(ws => sendQueueUpdate(ws));
 };
 
-// --- WebSocket Server Logic ---
-
 wss.on('connection', (ws: WebSocket) => {
-  // Assign a unique ID to each new connection
   const clientId = uuidv4();
   clients.set(ws, { id: clientId });
   console.log(`✅ Client connected: ${clientId}`);
@@ -65,19 +84,20 @@ wss.on('connection', (ws: WebSocket) => {
 
       if (!clientInfo) return;
 
-      // Handle 'joinQueue' message from client
       if (parsedMessage.type === 'joinQueue' && parsedMessage.payload.mode) {
         const mode = parsedMessage.payload.mode;
         console.log(`➡️ Client ${clientId} wants to join queue: ${mode}`);
         
-        clientInfo.mode = mode; // Store the user's chosen mode
+        clientInfo.mode = mode;
 
         if (mode === 'safe') {
           safeQueue.push(ws);
           broadcastQueueUpdates('safe');
+          checkForMatch('safe'); // --- NEW: Check for a match after joining ---
         } else if (mode === 'nsfw') {
           nsfwQueue.push(ws);
           broadcastQueueUpdates('nsfw');
+          checkForMatch('nsfw'); // --- NEW: Check for a match after joining ---
         }
       }
     } catch (error) {
@@ -89,11 +109,10 @@ wss.on('connection', (ws: WebSocket) => {
     const clientInfo = clients.get(ws);
     const clientId = clientInfo?.id || 'unknown';
 
-    // Remove client from any queue they might be in
     const safeIndex = safeQueue.indexOf(ws);
     if (safeIndex > -1) {
         safeQueue.splice(safeIndex, 1);
-        broadcastQueueUpdates('safe'); // Update everyone else in the queue
+        broadcastQueueUpdates('safe');
     }
 
     const nsfwIndex = nsfwQueue.indexOf(ws);
@@ -102,7 +121,7 @@ wss.on('connection', (ws: WebSocket) => {
         broadcastQueueUpdates('nsfw');
     }
 
-    clients.delete(ws); // Remove client from our main list
+    clients.delete(ws);
     console.log(`❌ Client disconnected: ${clientId}`);
   });
 

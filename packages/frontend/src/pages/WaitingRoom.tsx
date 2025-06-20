@@ -1,11 +1,13 @@
 import React, { useEffect, useState } from 'react';
-import { useSearchParams } from 'react-router-dom';
+// 1. Import useNavigate for navigation and useSearchParams
+import { useSearchParams, useNavigate } from 'react-router-dom';
 
 const wsURL = import.meta.env.VITE_WEBSOCKET_URL;
 
 const WaitingRoom: React.FC = () => {
   const [searchParams] = useSearchParams();
   const mode = searchParams.get('mode');
+  const navigate = useNavigate(); // 2. Initialize the navigate function
 
   const [queuePosition, setQueuePosition] = useState<number | string>('...');
   const [queueTotal, setQueueTotal] = useState<number | string>('...');
@@ -39,6 +41,13 @@ const WaitingRoom: React.FC = () => {
         setQueueTotal(message.payload.total);
         setStatusMessage('Searching for a partner...');
       }
+
+      // 3. Handle the new 'matchFound' message
+      if (message.type === 'matchFound') {
+        setStatusMessage(`Match found! Connecting to room...`);
+        // Navigate to the new chat page with the provided room ID
+        navigate(`/chat/${message.payload.roomId}`);
+      }
     };
 
     ws.onclose = () => {
@@ -54,7 +63,7 @@ const WaitingRoom: React.FC = () => {
     return () => {
       ws.close();
     };
-  }, [mode]);
+  }, [mode, navigate]); // Add navigate to dependency array
 
   return (
     <div className="bg-gray-900 text-white min-h-screen flex flex-col items-center justify-center font-sans">
