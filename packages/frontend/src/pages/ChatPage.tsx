@@ -51,7 +51,55 @@ const ChatPage: React.FC = () => {
     return pc;
   }, [sendMessage]);
 
-  // Effect to handle incoming WebSocket messages
+  // Effect to initialize media and clean up on exit
+  useEffect(() => {
+    // --- FIX APPLIED HERE ---
+    console.log(`Joining chat room: ${roomId}`);
+
+    const pc = new RTCPeerConnection({
+      iceServers: [
+        { urls: 'stun:stun.l.google.com:19302' },
+        { urls: 'stun:stun1.l.google.com:19302' },
+      ],
+    });
+
+    pc.onicecandidate = (event) => {
+      if (event.candidate) {
+        sendMessage(JSON.stringify({
+          type: 'webrtc-ice-candidate',
+          payload: event.candidate,
+        }));
+      }
+    };
+
+    pc.ontrack = (event) => {
+      if (remoteVideoRef.current && event.streams[0]) {
+        remoteVideoRef.current.srcObject = event.streams[0];
+      }
+    };
+
+    peerConnectionRef.current = pc;
+
+    navigator.mediaDevices.getUserMedia({ video: true, audio: true })
+      .then(stream => {
+        localStreamRef.current = stream;
+        if (localVideoRef.current) {
+          localVideoRef.current.srcObject = stream;
+        }
+        sendMessage(JSON.stringify({ type: 'webrtc-ready' }));
+      })
+      .catch(error => console.error("Error accessing media devices.", error));
+
+    return () => {
+      if (peerConnectionRef.current) {
+        peerConnectionRef.current.close();
+      }
+      localStreamRef.current?.getTracks().forEach(track => track.stop());
+    };
+    // --- FIX APPLIED HERE ---
+  }, [sendMessage, roomId]);
+
+  // Effect for Handling WebSocket Messages
   useEffect(() => {
     if (!lastMessage) return;
 
@@ -59,12 +107,18 @@ const ChatPage: React.FC = () => {
     const pc = peerConnectionRef.current;
 
     const handleOffer = async (offer: RTCSessionDescriptionInit) => {
-      const currentPC = pc || createPeerConnection();
-      await currentPC.setRemoteDescription(new RTCSessionDescription(offer));
-      localStreamRef.current?.getTracks().forEach(track => currentPC.addTrack(track, localStreamRef.current!));
-      const answer = await currentPC.createAnswer();
-      await currentPC.setLocalDescription(answer);
-      sendMessage(JSON.stringify({ type: 'webrtc-answer', payload: currentPC.localDescription }));
+        const currentPC = pc || createPeerConnection();
+        // Add local tracks before setting remote description
+        localStreamRef.current?.getTracks().forEach(track => {
+            if (currentPC.getSenders().find(s => s.track === track)) {
+                return; // Avoid adding the same track twice
+            }
+            currentPC.addTrack(track, localStreamRef.current!);
+        });
+        await currentPC.setRemoteDescription(new RTCSessionDescription(offer));
+        const answer = await currentPC.createAnswer();
+        await currentPC.setLocalDescription(answer);
+        sendMessage(JSON.stringify({ type: 'webrtc-answer', payload: currentPC.localDescription }));
     };
 
     const handleAnswer = async (answer: RTCSessionDescriptionInit) => {
@@ -74,12 +128,28 @@ const ChatPage: React.FC = () => {
 
     const handleIceCandidate = async (candidate: RTCIceCandidateInit) => {
       if (!pc) return;
-      await pc.addIceCandidate(new RTCIceCandidate(candidate));
+      try {
+        await pc.addIceCandidate(new RTCIceCandidate(candidate));
+      } catch (e) {
+        console.error('Error adding received ice candidate', e);
+      }
     };
     
     switch (type) {
       case 'webrtc-create-offer':
-        handleOffer(payload); // We treat the initial request as an offer itself
+        const createAndSendOffer = async () => {
+            const currentPC = pc || createPeerConnection();
+            localStreamRef.current?.getTracks().forEach(track => {
+                if (currentPC.getSenders().find(s => s.track === track)) {
+                    return;
+                }
+                currentPC.addTrack(track, localStreamRef.current!);
+            });
+            const offer = await currentPC.createOffer();
+            await currentPC.setLocalDescription(offer);
+            sendMessage(JSON.stringify({ type: 'webrtc-offer', payload: currentPC.localDescription }));
+        }
+        createAndSendOffer();
         break;
       case 'webrtc-offer':
         handleOffer(payload);
@@ -102,26 +172,6 @@ const ChatPage: React.FC = () => {
     }
   }, [lastMessage, navigate, sendMessage, createPeerConnection]);
 
-  // Effect to initialize media and clean up on exit
-  useEffect(() => {
-    navigator.mediaDevices.getUserMedia({ video: true, audio: true })
-      .then(stream => {
-        localStreamRef.current = stream;
-        if (localVideoRef.current) {
-          localVideoRef.current.srcObject = stream;
-        }
-        sendMessage(JSON.stringify({ type: 'webrtc-ready' }));
-      })
-      .catch(error => console.error("Error accessing media devices.", error));
-
-    return () => {
-      if (peerConnectionRef.current) {
-        peerConnectionRef.current.close();
-      }
-      localStreamRef.current?.getTracks().forEach(track => track.stop());
-    };
-  }, [sendMessage]);
-
   // --- UI Logic ---
 
   useEffect(() => {
@@ -131,35 +181,56 @@ const ChatPage: React.FC = () => {
   const handleSendMessage = () => {
     if (inputValue.trim()) {
       setMessages((prev) => [...prev, { sender: 'me', text: inputValue }]);
-      sendMessage(JSON.stringify({ type: 'chatMessage', payload: { message: inputValue } }));
+      sendMessage(JSON.stringify({
+        type: 'chatMessage',
+        payload: { message: inputValue },
+      }));
       setInputValue('');
     }
   };
 
   const handleNext = () => {
-    // For now, this just navigates home. Later it could re-queue.
     navigate('/');
+  };
+
+  const toggleMute = () => {
+    if (localStreamRef.current) {
+        localStreamRef.current.getAudioTracks().forEach(track => {
+            track.enabled = !track.enabled;
+        });
+        setIsMuted(prev => !prev);
+    }
+  };
+
+  const toggleVideo = () => {
+      if(localStreamRef.current) {
+          localStreamRef.current.getVideoTracks().forEach(track => {
+              track.enabled = !track.enabled;
+          });
+          setIsVideoOff(prev => !prev);
+      }
   };
 
   // --- JSX for the final UI ---
   return (
     <div className="flex flex-col md:flex-row h-screen bg-gray-900 text-white font-sans">
       
-      {/* Main Video & Controls Area */}
       <div className="flex-1 flex flex-col bg-black">
-        {/* Video Feeds */}
         <div className="relative flex-1">
           <video ref={remoteVideoRef} autoPlay playsInline className="w-full h-full object-cover" />
           <video ref={localVideoRef} autoPlay playsInline muted className="absolute bottom-6 right-6 w-1/4 max-w-xs border-2 border-gray-500 rounded-xl shadow-lg" />
         </div>
 
-        {/* Action Bar */}
         <div className="bg-gray-800 bg-opacity-50 p-4 flex justify-center items-center space-x-4">
-          <button onClick={() => setIsMuted(!isMuted)} className={`p-3 rounded-full ${isMuted ? 'bg-red-600' : 'bg-gray-600'} hover:bg-gray-500 transition-colors`}>
-             {/* Mute Icon SVG */}
+          <button onClick={toggleMute} className={`p-3 rounded-full ${isMuted ? 'bg-red-600' : 'bg-gray-600'} hover:bg-gray-500 transition-colors`}>
+            <svg xmlns="http://www.w3.org/2000/svg" className="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                {isMuted ? <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 11a7.5 7.5 0 01-7.5 7.5M11.5 3a7.5 7.5 0 017.5 7.5m-15 0a7.5 7.5 0 017.5-7.5m7.5 7.5a7.5 7.5 0 01-7.5 7.5M3 3l18 18" /> : <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 11a7.5 7.5 0 01-7.5 7.5M11.5 3a7.5 7.5 0 017.5 7.5m-15 0a7.5 7.5 0 017.5-7.5m7.5 7.5a7.5 7.5 0 01-7.5 7.5" />}
+            </svg>
           </button>
-          <button onClick={() => setIsVideoOff(!isVideoOff)} className={`p-3 rounded-full ${isVideoOff ? 'bg-red-600' : 'bg-gray-600'} hover:bg-gray-500 transition-colors`}>
-             {/* Video Icon SVG */}
+          <button onClick={toggleVideo} className={`p-3 rounded-full ${isVideoOff ? 'bg-red-600' : 'bg-gray-600'} hover:bg-gray-500 transition-colors`}>
+             <svg xmlns="http://www.w3.org/2000/svg" className="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                {isVideoOff ? <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 10l4.55a1.5 1.5 0 01.45 2.12l-2.05 3.76a1.5 1.5 0 01-2.56 0L11 14.5m0 0l-2.05-3.76a1.5 1.5 0 00-2.56 0L2 14.5m9-4.5V3m0 0a2 2 0 100 4 2 2 0 000-4z" /> : <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 10l4.55a1.5 1.5 0 01.45 2.12l-2.05 3.76a1.5 1.5 0 01-2.56 0L11 14.5m0 0l-2.05-3.76a1.5 1.5 0 00-2.56 0L2 14.5m9-4.5V3m0 0a2 2 0 100 4 2 2 0 000-4z" />}
+            </svg>
           </button>
           <button onClick={handleNext} className="bg-blue-600 text-white font-bold py-3 px-8 rounded-full hover:bg-blue-700 transition-colors text-lg">
             Next
@@ -167,7 +238,6 @@ const ChatPage: React.FC = () => {
         </div>
       </div>
       
-      {/* Text Chat Area */}
       <div className="w-full md:w-96 flex flex-col bg-gray-800 border-l border-gray-700">
         <header className="p-4 border-b border-gray-700 text-center">
           <h1 className="text-lg font-semibold">Nighthub Chat</h1>
