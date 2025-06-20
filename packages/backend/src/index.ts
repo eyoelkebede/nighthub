@@ -44,38 +44,51 @@ const getPartner = (ws: WebSocket): WebSocket | null => {
     return null;
 }
 
-/**
- * Checks a queue for a potential match and initiates it.
- * @param mode The queue to check ('safe' or 'nsfw').
- */
+// A new, more robust function to handle matches
 const checkForMatch = (mode: 'safe' | 'nsfw') => {
     const queue = mode === 'safe' ? safeQueue : nsfwQueue;
-    console.log(`Checking for match in ${mode} queue. Size: ${queue.length}`);
-    
-    if (queue.length >= 2) {
-        // Pull the first two users from the queue
+    console.log(`Checking for match in ${mode} queue. Current size: ${queue.length}`);
+
+    while (queue.length >= 2) {
+        // Pull the first two users from the front of the queue
         const user1 = queue.shift()!;
         const user2 = queue.shift()!;
 
+        const user1Info = clients.get(user1);
+        const user2Info = clients.get(user2);
+
+        // If for any reason we can't find their info, skip
+        if (!user1Info || !user2Info) {
+            console.error("Could not find client info for a matched user. Skipping match.");
+            continue; // check the queue again
+        }
+
         // Create a unique room ID for their private chat
         const roomId = uuidv4();
-        
+
+        // Immediately mark these users as no longer in a queue or ready for video,
+        // so they can't be part of any other logic accidentally.
+        user1Info.mode = undefined;
+        user2Info.mode = undefined;
+        user1Info.readyForVideo = false;
+        user2Info.readyForVideo = false;
+
         // Create the room and add the users to it
         rooms.set(roomId, [user1, user2]);
 
-        console.log(`✅ Match found! Room: ${roomId}`);
-        
-        // Notify both users that a match was found and provide the room ID
+        console.log(`✅ Match found! Room: ${roomId}, Users: ${user1Info.id}, ${user2Info.id}`);
+
+        // Tell both users they've been matched and what their room ID is
         if (user1.readyState === WebSocket.OPEN) {
             user1.send(JSON.stringify({ type: 'matchFound', payload: { roomId } }));
         }
         if (user2.readyState === WebSocket.OPEN) {
             user2.send(JSON.stringify({ type: 'matchFound', payload: { roomId } }));
         }
-
-        // Update queue positions for everyone still waiting
-        broadcastQueueUpdates(mode);
     }
+
+    // IMPORTANT: We only broadcast queue updates *after* all possible matches have been made.
+    broadcastQueueUpdates(mode);
 };
 
 /**
