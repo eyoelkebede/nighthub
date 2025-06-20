@@ -1,26 +1,30 @@
 import React, { useEffect, useState } from 'react';
-// Import a hook from React Router to read URL parameters
 import { useSearchParams } from 'react-router-dom';
 
+// Get the WebSocket URL from the environment variables
+const wsURL = import.meta.env.VITE_WEBSOCKET_URL;
+
 const WaitingRoom: React.FC = () => {
-  // useSearchParams lets us read the "?mode=safe" from the URL
   const [searchParams] = useSearchParams();
-  const mode = searchParams.get('mode'); // Will be 'safe' or 'nsfw'
+  const mode = searchParams.get('mode');
 
   const [queuePosition, setQueuePosition] = useState<number | string>('...');
   const [statusMessage, setStatusMessage] = useState('Initializing...');
 
   useEffect(() => {
-    // Establish a WebSocket connection when the component mounts.
-    // Make sure to use 'ws://' and not 'http://'.
-    const ws = new WebSocket('ws://nighthub-backend-z25y.onrender.com');
+    // First, check if the URL is defined.
+    if (!wsURL) {
+      console.error('WebSocket URL is not defined in environment variables.');
+      setStatusMessage('Configuration error.');
+      return;
+    }
 
-    // Handle the connection opening
+    const ws = new WebSocket(wsURL); // Use the variable here
+
     ws.onopen = () => {
+      // ... rest of the code is the same
       console.log('✅ WebSocket connection established');
       setStatusMessage('Connecting to server...');
-      
-      // Tell the server which queue we want to join
       const joinMessage = {
         type: 'joinQueue',
         payload: { mode: mode },
@@ -28,38 +32,34 @@ const WaitingRoom: React.FC = () => {
       ws.send(JSON.stringify(joinMessage));
     };
 
-    // Handle messages received from the server
+    // ... rest of the file is the same ...
     ws.onmessage = (event) => {
-      const message = JSON.parse(event.data);
-      console.log('⬅️ Received message from server:', message);
-
-      // We'll add logic here later to handle queue updates, etc.
-      if (message.type === 'queueUpdate') {
-        setQueuePosition(message.payload.position);
-        setStatusMessage('Searching for a partner...');
-      }
+        const message = JSON.parse(event.data);
+        console.log('⬅️ Received message from server:', message);
+        if (message.type === 'queueUpdate') {
+          setQueuePosition(message.payload.position);
+          setStatusMessage('Searching for a partner...');
+        }
     };
 
-    // Handle the connection closing
     ws.onclose = () => {
-      console.log('❌ WebSocket connection closed');
-      setStatusMessage('Disconnected. Please refresh.');
+        console.log('❌ WebSocket connection closed');
+        setStatusMessage('Disconnected. Please refresh.');
     };
 
-    // Handle connection errors
     ws.onerror = (error) => {
-      console.error('WebSocket error:', error);
-      setStatusMessage('Connection error.');
+        console.error('WebSocket error:', error);
+        setStatusMessage('Connection error.');
     };
 
-    // Clean up the connection when the component unmounts
     return () => {
-      ws.close();
+        ws.close();
     };
-  }, [mode]); // The effect re-runs if the 'mode' changes
+  }, [mode]);
 
   return (
     <div className="bg-gray-900 text-white min-h-screen flex flex-col items-center justify-center font-sans">
+      {/* ... The JSX part of the component is the same ... */}
       <h1 className="text-4xl font-bold uppercase tracking-wider">{mode} Waiting Room</h1>
       <p className="mt-4 text-lg text-gray-400">{statusMessage}</p>
       <div className="mt-8 w-16 h-16 border-4 border-dashed rounded-full animate-spin border-green-400"></div>
