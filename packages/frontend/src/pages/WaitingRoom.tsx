@@ -1,69 +1,43 @@
 import React, { useEffect, useState } from 'react';
-// 1. Import useNavigate for navigation and useSearchParams
 import { useSearchParams, useNavigate } from 'react-router-dom';
-
-const wsURL = import.meta.env.VITE_WEBSOCKET_URL;
+import { useWebSocket } from '../context/WebSocketProvider'; // Import our new hook
 
 const WaitingRoom: React.FC = () => {
   const [searchParams] = useSearchParams();
-  const mode = searchParams.get('mode');
-  const navigate = useNavigate(); // 2. Initialize the navigate function
+  const navigate = useNavigate();
+  const { lastMessage, sendMessage, isConnected } = useWebSocket(); // Use the context
 
+  const mode = searchParams.get('mode');
   const [queuePosition, setQueuePosition] = useState<number | string>('...');
   const [queueTotal, setQueueTotal] = useState<number | string>('...');
   const [statusMessage, setStatusMessage] = useState('Initializing...');
 
+  // Effect to join the queue once connected
   useEffect(() => {
-    if (!wsURL) {
-      console.error('WebSocket URL is not defined in environment variables.');
-      setStatusMessage('Configuration error.');
-      return;
-    }
-
-    const ws = new WebSocket(wsURL);
-
-    ws.onopen = () => {
-      console.log('✅ WebSocket connection established');
+    if (isConnected) {
       setStatusMessage('Connecting to server...');
       const joinMessage = {
         type: 'joinQueue',
         payload: { mode: mode },
       };
-      ws.send(JSON.stringify(joinMessage));
-    };
+      sendMessage(JSON.stringify(joinMessage));
+    }
+  }, [isConnected, mode, sendMessage]);
 
-    ws.onmessage = (event) => {
-      const message = JSON.parse(event.data);
-      console.log('⬅️ Received message from server:', message);
-
-      if (message.type === 'queueUpdate') {
-        setQueuePosition(message.payload.position);
-        setQueueTotal(message.payload.total);
+  // Effect to listen for messages from the server
+  useEffect(() => {
+    if (lastMessage) {
+      if (lastMessage.type === 'queueUpdate') {
+        setQueuePosition(lastMessage.payload.position);
+        setQueueTotal(lastMessage.payload.total);
         setStatusMessage('Searching for a partner...');
       }
-
-      // 3. Handle the new 'matchFound' message
-      if (message.type === 'matchFound') {
+      if (lastMessage.type === 'matchFound') {
         setStatusMessage(`Match found! Connecting to room...`);
-        // Navigate to the new chat page with the provided room ID
-        navigate(`/chat/${message.payload.roomId}`);
+        navigate(`/chat/${lastMessage.payload.roomId}`);
       }
-    };
-
-    ws.onclose = () => {
-      console.log('❌ WebSocket connection closed');
-      setStatusMessage('Disconnected. Please refresh.');
-    };
-
-    ws.onerror = (error) => {
-      console.error('WebSocket error:', error);
-      setStatusMessage('Connection error.');
-    };
-
-    return () => {
-      ws.close();
-    };
-  }, [mode, navigate]); // Add navigate to dependency array
+    }
+  }, [lastMessage, navigate]);
 
   return (
     <div className="bg-gray-900 text-white min-h-screen flex flex-col items-center justify-center font-sans">
