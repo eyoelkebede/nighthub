@@ -5,9 +5,10 @@ import http from 'http';
 import { WebSocketServer, WebSocket } from 'ws';
 import { v4 as uuidv4 } from 'uuid';
 
-// Extend the WebSocket type to include our custom properties
+// Extend WebSocket to include our custom properties
 interface ExtendedWebSocket extends WebSocket {
   id: string;
+  mode?: 'safe' | 'nsfw';
 }
 
 dotenv.config();
@@ -21,22 +22,14 @@ app.use(express.json());
 const server = http.createServer(app);
 const wss = new WebSocketServer({ server });
 
-// --- Refactored In-Memory Data Stores ---
-// The main lookup for clients. Key: clientId (string), Value: The WebSocket connection object.
+// --- Data Stores ---
 const clients = new Map<string, ExtendedWebSocket>();
-// The queues now store the string IDs of the clients, not the full objects.
 const safeQueue: string[] = [];
 const nsfwQueue: string[] = [];
-// Rooms also store client IDs. Key: roomId, Value: array of 2 client IDs.
 const rooms = new Map<string, string[]>();
 
 // --- Helper Functions ---
 
-/**
- * Finds the partner's ID for a given user.
- * @param clientId The ID of the user.
- * @returns The ID of the partner, or null if not found.
- */
 const getPartnerId = (clientId: string): string | null => {
     for (const userIds of rooms.values()) {
         if (userIds.includes(clientId)) {
@@ -46,52 +39,6 @@ const getPartnerId = (clientId: string): string | null => {
     return null;
 }
 
-/**
- * Checks a queue for a potential match and initiates it.
- * @param mode The queue to check ('safe' or 'nsfw').
- */
-const checkForMatch = (mode: 'safe' | 'nsfw') => {
-    const queue = mode === 'safe' ? safeQueue : nsfwQueue;
-    console.log(`Checking for match in ${mode} queue. Current size: ${queue.length}`);
-
-    while (queue.length >= 2) {
-        const user1Id = queue.shift()!;
-        const user2Id = queue.shift()!;
-
-        const user1Ws = clients.get(user1Id);
-        const user2Ws = clients.get(user2Id);
-        
-        // Ensure both clients are still connected before creating the room
-        if (!user1Ws || !user2Ws) {
-            console.error("A matched user disconnected before room creation. Re-queuing the other if they exist.");
-            // If one user disconnected, put the other one back at the front of the queue
-            if(user1Ws) queue.unshift(user1Id);
-            if(user2Ws) queue.unshift(user2Id);
-            return;
-        }
-
-        const roomId = uuidv4();
-        rooms.set(roomId, [user1Id, user2Id]);
-
-        console.log(`✅ Match found! Room: ${roomId}, Users: ${user1Id}, ${user2Id}`);
-        
-        const matchFoundPayload = JSON.stringify({ type: 'matchFound', payload: { roomId } });
-
-        if (user1Ws.readyState === WebSocket.OPEN) {
-            user1Ws.send(matchFoundPayload);
-        }
-        if (user2Ws.readyState === WebSocket.OPEN) {
-            user2Ws.send(matchFoundPayload);
-        }
-    }
-    // After all matches are made, update everyone still waiting
-    broadcastQueueUpdates(mode);
-};
-
-/**
- * Sends a queue update to every user in a specific queue.
- * @param mode The queue to broadcast to ('safe' or 'nsfw').
- */
 const broadcastQueueUpdates = (mode: 'safe' | 'nsfw') => {
     const queue = mode === 'safe' ? safeQueue : nsfwQueue;
     queue.forEach((clientId, index) => {
@@ -108,13 +55,46 @@ const broadcastQueueUpdates = (mode: 'safe' | 'nsfw') => {
     });
 };
 
+const checkForMatch = (mode: 'safe' | 'nsfw') => {
+    const queue = mode === 'safe' ? safeQueue : nsfwQueue;
+    console.log(`Checking for match in ${mode} queue. Size: ${queue.length}`);
+
+    while (queue.length >= 2) {
+        const user1Id = queue.shift()!;
+        const user2Id = queue.shift()!;
+
+        const user1Ws = clients.get(user1Id);
+        const user2Ws = clients.get(user2Id);
+        
+        if (!user1Ws || !user2Ws) {
+            console.error("A matched user disconnected before room creation.");
+            if(user1Ws) queue.unshift(user1Id);
+            if(user2Ws) queue.unshift(user2Id);
+            continue;
+        }
+
+        const roomId = uuidv4();
+        rooms.set(roomId, [user1Id, user2Id]);
+        user1Ws.mode = undefined; // No longer in a queue
+        user2Ws.mode = undefined;
+
+        console.log(`✅ Match found! Room: ${roomId}, Users: ${user1Id}, ${user2Id}`);
+        
+        const matchFoundPayload = JSON.stringify({ type: 'matchFound', payload: { roomId } });
+        user1Ws.send(matchFoundPayload);
+        user2Ws.send(matchFoundPayload);
+    }
+    
+    // Broadcast updates to the remaining people in the queue
+    broadcastQueueUpdates(mode);
+};
+
+
 // --- Main WebSocket Server Logic ---
 
 wss.on('connection', (ws: WebSocket) => {
   const clientId = uuidv4();
-  // Attach the ID directly to the WebSocket object for easy access
   (ws as ExtendedWebSocket).id = clientId;
-  // Store the client by its ID
   clients.set(clientId, ws as ExtendedWebSocket);
   console.log(`✅ Client connected: ${clientId}`);
 
@@ -122,91 +102,107 @@ wss.on('connection', (ws: WebSocket) => {
     try {
       const parsedMessage = JSON.parse(message.toString());
       const senderId = (ws as ExtendedWebSocket).id;
+      const senderWs = clients.get(senderId);
+      if(!senderWs) return;
 
-      // Handle user joining a queue
-      if (parsedMessage.type === 'joinQueue' && parsedMessage.payload.mode) {
-        const mode = parsedMessage.payload.mode;
-        const queue = mode === 'safe' ? safeQueue : nsfwQueue;
-        queue.push(senderId);
-        checkForMatch(mode);
-      }
-
-      // Handle incoming text chat messages
-      if (parsedMessage.type === 'chatMessage' && parsedMessage.payload.message) {
-        const partnerId = getPartnerId(senderId);
-        if (partnerId) {
-            const partnerWs = clients.get(partnerId);
-            if (partnerWs && partnerWs.readyState === WebSocket.OPEN) {
-              partnerWs.send(JSON.stringify({
-                type: 'chatMessage',
-                payload: { sender: 'partner', message: parsedMessage.payload.message },
-              }));
-            }
+      switch(parsedMessage.type) {
+        case 'joinQueue': {
+          const mode = parsedMessage.payload.mode as 'safe' | 'nsfw';
+          senderWs.mode = mode; // Assign mode to the websocket object
+          const queue = mode === 'safe' ? safeQueue : nsfwQueue;
+          
+          // Prevent user from joining multiple queues
+          if (!queue.includes(senderId)) {
+            queue.push(senderId);
+          }
+          checkForMatch(mode);
+          break;
         }
-      }
 
-      // Handle WebRTC signaling
-      if (parsedMessage.type.startsWith('webrtc-')) {
+        case 'chatMessage': {
           const partnerId = getPartnerId(senderId);
           if (partnerId) {
               const partnerWs = clients.get(partnerId);
               if (partnerWs && partnerWs.readyState === WebSocket.OPEN) {
-                  // Forward the original message to the partner
-                  partnerWs.send(JSON.stringify(parsedMessage));
+                partnerWs.send(JSON.stringify({
+                  type: 'chatMessage',
+                  payload: { message: parsedMessage.payload.message },
+                }));
               }
           }
+          break;
+        }
+
+        case 'requestNextPartner': {
+            // Logic for when a user clicks 'Next'
+            const oldPartnerId = getPartnerId(senderId);
+            if (oldPartnerId) {
+                const oldPartnerWs = clients.get(oldPartnerId);
+                // Notify the old partner that the user has left
+                if (oldPartnerWs && oldPartnerWs.readyState === WebSocket.OPEN) {
+                    oldPartnerWs.send(JSON.stringify({ type: 'partnerDisconnected' }));
+                }
+            }
+
+            // Remove the old room
+            for (const [roomId, users] of rooms.entries()) {
+                if (users.includes(senderId)) {
+                    rooms.delete(roomId);
+                    break;
+                }
+            }
+
+            // Put the user back into the same queue they were in
+            const mode = senderWs.mode || 'safe'; // Default to safe if mode is lost
+            console.log(`User ${senderId} requested next, re-queuing in ${mode}`);
+            const queue = mode === 'safe' ? safeQueue : nsfwQueue;
+            if(!queue.includes(senderId)) {
+                queue.push(senderId);
+            }
+            checkForMatch(mode);
+            break;
+        }
       }
     } catch (error) {
-      console.error('Failed to parse message or handle logic:', error);
+      console.error('Failed to process message:', error);
     }
   });
 
-  // Handle a client disconnecting
   ws.on('close', () => {
     const clientId = (ws as ExtendedWebSocket).id;
     console.log(`❌ Client disconnected: ${clientId}`);
-
-    // If the user was in a chat room, notify their partner and remove the room
+    
+    // Notify partner and delete room
     const partnerId = getPartnerId(clientId);
     if (partnerId) {
-        const partnerWs = clients.get(partnerId);
-        if (partnerWs && partnerWs.readyState === WebSocket.OPEN) {
-            partnerWs.send(JSON.stringify({ type: 'partnerDisconnected' }));
+      const partnerWs = clients.get(partnerId);
+      if (partnerWs && partnerWs.readyState === WebSocket.OPEN) {
+        partnerWs.send(JSON.stringify({ type: 'partnerDisconnected' }));
+      }
+      for (const [roomId, users] of rooms.entries()) {
+        if (users.includes(clientId)) {
+          rooms.delete(roomId);
+          break;
         }
-        // Find and delete the room
-        for (const [roomId, users] of rooms.entries()) {
-          if (users.includes(clientId)) {
-              rooms.delete(roomId);
-              break;
-          }
-        }
+      }
     }
     
-    // Remove the user from any queue they were in
-    let queue = safeQueue;
-    let index = queue.indexOf(clientId);
-    if (index > -1) {
-        queue.splice(index, 1);
-        broadcastQueueUpdates('safe');
-    } else {
-        queue = nsfwQueue;
-        index = queue.indexOf(clientId);
-        if (index > -1) {
-            queue.splice(index, 1);
-            broadcastQueueUpdates('nsfw');
-        }
+    // Remove from any queue
+    const safeIndex = safeQueue.indexOf(clientId);
+    if (safeIndex > -1) {
+      safeQueue.splice(safeIndex, 1);
+      broadcastQueueUpdates('safe');
+    }
+    const nsfwIndex = nsfwQueue.indexOf(clientId);
+    if (nsfwIndex > -1) {
+      nsfwQueue.splice(nsfwIndex, 1);
+      broadcastQueueUpdates('nsfw');
     }
 
-    // Clean up the main client list
     clients.delete(clientId);
-  });
-
-  ws.on('error', (error) => {
-    console.error('WebSocket error for client:', (ws as ExtendedWebSocket).id, error);
   });
 });
 
-// Start the server
 server.listen(port, () => {
   console.log(`[server]: Server is running at http://localhost:${port}`);
 });
