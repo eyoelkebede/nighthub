@@ -18,21 +18,11 @@ app.use(express.json());
 const server = http.createServer(app);
 const wss = new WebSocketServer({ server });
 
-// Data Stores
 const clients = new Map<string, ExtendedWebSocket>();
 const safeQueue: string[] = [];
 const nsfwQueue: string[] = [];
 const rooms = new Map<string, string[]>();
 
-// Profanity Filter
-const forbiddenWords = ['badword1', 'badword2'];
-const containsForbiddenWord = (message: string): boolean => {
-    return forbiddenWords.some(word => message.toLowerCase().includes(word));
-};
-
-// --- Helper Functions ---
-
-// FIX: Added a return null at the end of the function
 const getPartnerId = (clientId: string): string | null => {
     for (const userIds of rooms.values()) {
         if (userIds.includes(clientId)) {
@@ -55,22 +45,42 @@ const broadcastQueueUpdates = (mode: 'safe' | 'nsfw') => {
     });
 };
 
-const checkForMatch = (mode: 'safe' | 'nsfw') => { /* ... no change from previous correct version ... */ };
+const checkForMatch = (mode: 'safe' | 'nsfw') => {
+    const queue = mode === 'safe' ? safeQueue : nsfwQueue;
+    console.log(`Checking for match in ${mode} queue. Size: ${queue.length}`);
+    while (queue.length >= 2) {
+        const user1Id = queue.shift()!;
+        const user2Id = queue.shift()!;
+        const user1Ws = clients.get(user1Id);
+        const user2Ws = clients.get(user2Id);
+        
+        if (!user1Ws || !user2Ws) {
+            if(user1Ws) queue.unshift(user1Id);
+            if(user2Ws) queue.unshift(user2Id);
+            continue;
+        }
 
-// NEW: Separated broadcast functions for each waiting room chat
+        const roomId = uuidv4();
+        rooms.set(roomId, [user1Id, user2Id]);
+        
+        console.log(`✅ Match found! Room: ${roomId}, Users: ${user1Id}, ${user2Id}`);
+        const matchFoundPayload = JSON.stringify({ type: 'matchFound', payload: { roomId } });
+        user1Ws.send(matchFoundPayload);
+        user2Ws.send(matchFoundPayload);
+    }
+    broadcastQueueUpdates(mode);
+};
+
 const broadcastToWaitingRoom = (message: object, mode: 'safe' | 'nsfw') => {
     const queue = mode === 'safe' ? safeQueue : nsfwQueue;
     const messageString = JSON.stringify(message);
-    
     queue.forEach(clientId => {
         const ws = clients.get(clientId);
         if (ws && ws.readyState === WebSocket.OPEN) {
             ws.send(messageString);
         }
     });
-}
-
-// --- Main WebSocket Server Logic ---
+};
 
 wss.on('connection', (ws: WebSocket) => {
   const clientId = uuidv4();
@@ -85,42 +95,91 @@ wss.on('connection', (ws: WebSocket) => {
       if(!senderWs) return;
 
       switch(parsedMessage.type) {
-        case 'joinQueue':
+        case 'joinQueue': {
           const mode = parsedMessage.payload.mode as 'safe' | 'nsfw';
           senderWs.mode = mode;
           const queue = mode === 'safe' ? safeQueue : nsfwQueue;
           if (!queue.includes(senderWs.id)) queue.push(senderWs.id);
           checkForMatch(mode);
           break;
-
-        case 'waitingRoomChat':
+        }
+        case 'waitingRoomChat': {
           const senderMode = senderWs.mode;
-          if (!senderMode) return; // Ignore chat if user isn't in a queue
-
+          if (!senderMode) return;
           const { username, message: chatMessage } = parsedMessage.payload;
-          
-          if (containsForbiddenWord(chatMessage)) {
-            senderWs.send(JSON.stringify({ type: 'systemMessage', payload: { text: 'Your message was removed.' } }));
-            return;
-          }
-
-          // FIX: Call the broadcast function for the specific mode
           broadcastToWaitingRoom({
               type: 'waitingRoomChat',
               payload: { senderId: senderWs.id, username, message: chatMessage }
           }, senderMode);
           break;
-        
-        // Other cases ('chatMessage', 'requestNextPartner') remain unchanged
-        case 'chatMessage': { /* ... */ }
-        case 'requestNextPartner': { /* ... */ }
+        }
+        case 'chatMessage': {
+          const partnerId = getPartnerId(senderWs.id);
+          if (partnerId) {
+              const partnerWs = clients.get(partnerId);
+              if (partnerWs?.readyState === WebSocket.OPEN) {
+                partnerWs.send(JSON.stringify({
+                  type: 'chatMessage',
+                  payload: { message: parsedMessage.payload.message },
+                }));
+              }
+          }
+          break;
+        }
+        case 'requestNextPartner': {
+            const oldPartnerId = getPartnerId(senderWs.id);
+            if (oldPartnerId) {
+                const oldPartnerWs = clients.get(oldPartnerId);
+                if (oldPartnerWs?.readyState === WebSocket.OPEN) {
+                    oldPartnerWs.send(JSON.stringify({ type: 'partnerDisconnected' }));
+                }
+            }
+            for (const [roomId, users] of rooms.entries()) {
+                if (users.includes(senderWs.id)) {
+                    rooms.delete(roomId);
+                    break;
+                }
+            }
+            const mode = senderWs.mode || 'safe';
+            const queue = mode === 'safe' ? safeQueue : nsfwQueue;
+            if(!queue.includes(senderWs.id)) {
+                queue.push(senderWs.id);
+            }
+            senderWs.send(JSON.stringify({ type: 'requeued' }));
+            checkForMatch(mode);
+            break;
+        }
       }
     } catch (error) {
       console.error('Failed to process message:', error);
     }
   });
 
-  ws.on('close', () => { /* ... no change ... */ });
+  ws.on('close', () => {
+    const clientId = (ws as ExtendedWebSocket).id;
+    const partnerId = getPartnerId(clientId);
+    if (partnerId) {
+      const partnerWs = clients.get(partnerId);
+      if (partnerWs?.readyState === WebSocket.OPEN) {
+        partnerWs.send(JSON.stringify({ type: 'partnerDisconnected' }));
+      }
+      for (const [roomId, users] of rooms.entries()) {
+        if (users.includes(clientId)) rooms.delete(roomId);
+      }
+    }
+    let index = safeQueue.indexOf(clientId);
+    if (index > -1) {
+      safeQueue.splice(index, 1);
+      broadcastQueueUpdates('safe');
+    }
+    index = nsfwQueue.indexOf(clientId);
+    if (index > -1) {
+      nsfwQueue.splice(index, 1);
+      broadcastQueueUpdates('nsfw');
+    }
+    clients.delete(clientId);
+    console.log(`❌ Client disconnected: ${clientId}`);
+  });
 });
 
 server.listen(port, () => {
