@@ -1,8 +1,9 @@
-import React, { useEffect, useState, useMemo, useRef } from 'react';
+import React, { useEffect, useState, useMemo, useRef, useCallback } from 'react';
 import { useSearchParams, useNavigate } from 'react-router-dom';
 import { useWebSocket } from '../context/WebSocketProvider';
 import { v4 as uuidv4 } from 'uuid';
 
+// --- Types ---
 interface ChatMessage {
     senderId: string;
     username: string;
@@ -32,7 +33,7 @@ const nouns = ['Fox', 'Panda', 'Rider', 'Ghost', 'Dragon', 'Ninja', 'Wizard'
 const generateRandomUsername = () => `${adjectives[Math.floor(Math.random() * adjectives.length)]} ${nouns[Math.floor(Math.random() * nouns.length)]}`;
 
 
-// --- The Component ---
+/// --- The Component ---
 const WaitingRoom: React.FC = () => {
     const [searchParams] = useSearchParams();
     const navigate = useNavigate();
@@ -42,16 +43,76 @@ const WaitingRoom: React.FC = () => {
     const [queuePosition, setQueuePosition] = useState<number | string>('...');
     const [queueTotal, setQueueTotal] = useState<number | string>('...');
     const [statusMessage, setStatusMessage] = useState('Connecting...');
+
+    // --- State and Refs for new features ---
     const [messages, setMessages] = useState<Message[]>([]);
     const [chatInput, setChatInput] = useState('');
+    const [showInactivityModal, setShowInactivityModal] = useState(false);
 
     const username = useMemo(() => generateRandomUsername(), []);
     const myIdRef = useRef<string>(uuidv4());
     const messagesEndRef = useRef<HTMLDivElement>(null);
 
+    // Refs to hold the timer IDs
+    const inactivityTimerRef = useRef<NodeJS.Timeout>();
+    const finalCountdownTimerRef = useRef<NodeJS.Timeout>();
+
+    // --- Logic for Inactivity Timer ---
+    const resetInactivityTimer = useCallback(() => {
+        // Clear any existing timers
+        clearTimeout(inactivityTimerRef.current);
+        clearTimeout(finalCountdownTimerRef.current);
+        
+        // If the modal is showing, hide it because we have activity
+        if (showInactivityModal) {
+            setShowInactivityModal(false);
+        }
+
+        // Set a new timer to show the modal after 1 minute of inactivity
+        inactivityTimerRef.current = setTimeout(() => {
+            console.log("User inactive, showing modal.");
+            setShowInactivityModal(true);
+        }, 60 * 1000); // 60 seconds
+    }, [showInactivityModal]);
+
+    // This effect runs when the inactivity modal appears
+    useEffect(() => {
+        if (showInactivityModal) {
+            // When the modal appears, start a new 15-second countdown to disconnect
+            finalCountdownTimerRef.current = setTimeout(() => {
+                console.log("User did not respond to modal. Disconnecting.");
+                // Navigating away will trigger the component to unmount,
+                // which cleans up the WebSocket connection.
+                navigate('/'); 
+            }, 15 * 1000); // 15 seconds
+        }
+        // Cleanup the final countdown if the component unmounts or modal is hidden
+        return () => clearTimeout(finalCountdownTimerRef.current);
+    }, [showInactivityModal, navigate]);
+
+
+    // Effect to set up and tear down global event listeners for user activity
+    useEffect(() => {
+        resetInactivityTimer(); // Start the timer when the component mounts
+
+        // Listen for these events on the whole window
+        window.addEventListener('mousemove', resetInactivityTimer);
+        window.addEventListener('keypress', resetInactivityTimer);
+        window.addEventListener('click', resetInactivityTimer);
+
+        // Cleanup function when the component unmounts
+        return () => {
+            clearTimeout(inactivityTimerRef.current);
+            clearTimeout(finalCountdownTimerRef.current);
+            window.removeEventListener('mousemove', resetInactivityTimer);
+            window.removeEventListener('keypress', resetInactivityTimer);
+            window.removeEventListener('click', resetInactivityTimer);
+        };
+    }, [resetInactivityTimer]);
+    
+    // --- WebSocket and Message Logic (Unchanged) ---
     useEffect(() => {
         if (isConnected) {
-            setStatusMessage('Joining queue...');
             sendMessage(JSON.stringify({ type: 'joinQueue', payload: { mode } }));
         }
     }, [isConnected, mode, sendMessage]);
@@ -65,7 +126,6 @@ const WaitingRoom: React.FC = () => {
                     setStatusMessage('Searching for a partner...');
                     break;
                 case 'matchFound':
-                    setStatusMessage(`Match found! Connecting...`);
                     navigate(`/chat/${lastMessage.payload.roomId}?mode=${mode}`);
                     break;
                 case 'waitingRoomChat':
@@ -81,7 +141,6 @@ const WaitingRoom: React.FC = () => {
     
     const handleSendChatMessage = () => {
         if (chatInput.trim()) {
-            // Note: We send our session ID to the server now.
             sendMessage(JSON.stringify({
                 type: 'waitingRoomChat',
                 payload: { senderId: myIdRef.current, username, message: chatInput }
@@ -90,8 +149,25 @@ const WaitingRoom: React.FC = () => {
         }
     };
 
+    // --- JSX including the new Modal ---
     return (
         <div className="bg-gray-900 text-white min-h-screen flex flex-col md:flex-row font-sans">
+            {/* Inactivity Modal Overlay */}
+            {showInactivityModal && (
+                <div className="absolute inset-0 bg-black bg-opacity-80 flex flex-col items-center justify-center z-50 p-4 text-center">
+                    <h2 className="text-4xl font-bold">Are you still there?</h2>
+                    <p className="mt-4 text-lg text-gray-300">Click the button below to stay in the queue.</p>
+                    <button 
+                        onClick={resetInactivityTimer} // Clicking the button is activity
+                        className="mt-8 bg-blue-600 text-white font-bold py-4 px-10 rounded-full hover:bg-blue-700 transition-colors text-xl"
+                    >
+                        I'm Still Here!
+                    </button>
+                    <p className="mt-4 text-sm text-gray-500">You will be disconnected otherwise.</p>
+                </div>
+            )}
+
+            {/* Left Panel: Queue Status */}
             <div className="w-full md:w-1/3 flex flex-col items-center justify-center p-8 border-b-2 md:border-b-0 md:border-r-2 border-gray-800">
                 <h1 className="text-4xl font-bold uppercase tracking-wider text-green-400">WAITING ROOM</h1>
                 <p className="mt-4 text-lg text-gray-400">{statusMessage}</p>
@@ -103,6 +179,8 @@ const WaitingRoom: React.FC = () => {
                     <span className="text-gray-400">{queueTotal}</span>
                 </div>
             </div>
+
+            {/* Right Panel: Group Chat */}
             <div className="flex-1 flex flex-col bg-gray-800">
                 <header className="p-4 border-b border-gray-700 text-center">
                     <h2 className="text-lg font-semibold">Waiting Room Group Chat ({mode} mode)</h2>
@@ -111,7 +189,6 @@ const WaitingRoom: React.FC = () => {
                 <main className="flex-1 p-4 overflow-y-auto space-y-4">
                     {messages.map((msg, index) => {
                         if (msg.type === 'system') return <p key={index} className="text-center w-full text-sm text-yellow-400 italic">{msg.text}</p>;
-                        
                         const isMe = msg.senderId === myIdRef.current;
                         return (
                             <div key={index} className={`flex items-end ${isMe ? 'justify-end' : 'justify-start'}`}>
