@@ -17,42 +17,30 @@ const server = http.createServer(app);
 const wss = new WebSocketServer({ server });
 
 // --- Data Stores ---
-const clients = new Map<WebSocket, { id: string; mode?: 'safe' | 'nsfw' }>();
+// Add a 'readyForVideo' flag to our client info
+const clients = new Map<WebSocket, { id: string; mode?: 'safe' | 'nsfw'; readyForVideo?: boolean }>();
 const safeQueue: WebSocket[] = [];
 const nsfwQueue: WebSocket[] = [];
-// NEW: Map to store active chat rooms. Key: roomId, Value: array of 2 WebSockets
 const rooms = new Map<string, WebSocket[]>();
 
-// --- Functions ---
-const checkForMatch = (mode: 'safe' | 'nsfw') => {
-    const queue = mode === 'safe' ? safeQueue : nsfwQueue;
-    if (queue.length >= 2) {
-        const user1 = queue.shift()!;
-        const user2 = queue.shift()!;
-        const roomId = uuidv4();
-        
-        // NEW: Create the room
-        rooms.set(roomId, [user1, user2]);
-
-        console.log(`✅ Match found! Room: ${roomId}`);
-        
-        if (user1.readyState === WebSocket.OPEN) {
-            user1.send(JSON.stringify({ type: 'matchFound', payload: { roomId } }));
+// --- Helper Functions ---
+const getPartner = (ws: WebSocket): WebSocket | null => {
+    for (const users of rooms.values()) {
+        if (users.includes(ws)) {
+            return users.find(user => user !== ws) || null;
         }
-        if (user2.readyState === WebSocket.OPEN) {
-            user2.send(JSON.stringify({ type: 'matchFound', payload: { roomId } }));
-        }
-        broadcastQueueUpdates(mode);
     }
-};
+    return null;
+}
 
+const checkForMatch = (mode: 'safe' | 'nsfw') => { /* ... no change ... */ };
 const sendQueueUpdate = (ws: WebSocket) => { /* ... no change ... */ };
 const broadcastQueueUpdates = (mode: 'safe' | 'nsfw') => { /* ... no change ... */ };
 
 // --- WebSocket Server Logic ---
 wss.on('connection', (ws: WebSocket) => {
   const clientId = uuidv4();
-  clients.set(ws, { id: clientId });
+  clients.set(ws, { id: clientId, readyForVideo: false }); // Set ready flag to false initially
   console.log(`✅ Client connected: ${clientId}`);
 
   ws.on('message', (message) => {
@@ -61,41 +49,29 @@ wss.on('connection', (ws: WebSocket) => {
       const clientInfo = clients.get(ws);
       if (!clientInfo) return;
 
-      // Logic for joining a queue
-      if (parsedMessage.type === 'joinQueue' && parsedMessage.payload.mode) {
-        const mode = parsedMessage.payload.mode;
-        clientInfo.mode = mode;
-        const queue = mode === 'safe' ? safeQueue : nsfwQueue;
-        queue.push(ws);
-        broadcastQueueUpdates(mode);
-        checkForMatch(mode);
-      }
-
-      // --- NEW: Logic for handling chat messages ---
-      if (parsedMessage.type === 'chatMessage' && parsedMessage.payload.message) {
-        // Find which room the sender is in
-        let currentRoomId: string | null = null;
-        let partner: WebSocket | null = null;
-        
-        for (const [roomId, users] of rooms.entries()) {
-          if (users.includes(ws)) {
-            currentRoomId = roomId;
-            partner = users.find(user => user !== ws) || null;
-            break;
+      if (parsedMessage.type === 'joinQueue') { /* ... no change ... */ }
+      if (parsedMessage.type === 'chatMessage') { /* ... no change ... */ }
+      if (parsedMessage.type.startsWith('webrtc-')) {
+          const partner = getPartner(ws);
+          if (partner && partner.readyState === WebSocket.OPEN) {
+              partner.send(JSON.stringify(parsedMessage));
           }
-        }
+      }
+      
+      // --- NEW: Logic for initiating the WebRTC call ---
+      if (parsedMessage.type === 'webrtc-ready') {
+          console.log(`Client ${clientInfo.id} is ready for video.`);
+          clientInfo.readyForVideo = true;
+          const partner = getPartner(ws);
+          const partnerInfo = partner ? clients.get(partner) : null;
 
-        // If they have a partner, forward the message
-        if (partner && partner.readyState === WebSocket.OPEN) {
-          const forwardedMessage = {
-            type: 'chatMessage',
-            payload: {
-              sender: 'partner',
-              message: parsedMessage.payload.message,
-            },
-          };
-          partner.send(JSON.stringify(forwardedMessage));
-        }
+          // If the partner is also ready, tell this client to start the call
+          if (partner && partnerInfo?.readyForVideo) {
+              console.log(`Both clients are ready. Telling ${clientInfo.id} to create the offer.`);
+              if (ws.readyState === WebSocket.OPEN) {
+                  ws.send(JSON.stringify({ type: 'webrtc-create-offer' }));
+              }
+          }
       }
 
     } catch (error) {
@@ -103,34 +79,7 @@ wss.on('connection', (ws: WebSocket) => {
     }
   });
 
-  ws.on('close', () => {
-    // --- NEW: Handle disconnection from a chat room ---
-    let partnerToNotify: WebSocket | null = null;
-    let roomToDelete: string | null = null;
-
-    for (const [roomId, users] of rooms.entries()) {
-      if (users.includes(ws)) {
-        roomToDelete = roomId;
-        partnerToNotify = users.find(user => user !== ws) || null;
-        break;
-      }
-    }
-    
-    if (roomToDelete) {
-      rooms.delete(roomToDelete);
-      if (partnerToNotify && partnerToNotify.readyState === WebSocket.OPEN) {
-        partnerToNotify.send(JSON.stringify({ type: 'partnerDisconnected' }));
-      }
-    }
-    
-    // ... rest of disconnection logic is the same ...
-    const clientInfo = clients.get(ws);
-    const clientId = clientInfo?.id || 'unknown';
-    // ... queue removal logic ...
-    clients.delete(ws);
-    console.log(`❌ Client disconnected: ${clientId}`);
-  });
-
+  ws.on('close', () => { /* ... no change ... */ });
   ws.on('error', (error) => { /* ... no change ... */ });
 });
 
