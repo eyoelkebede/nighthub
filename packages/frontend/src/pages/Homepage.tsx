@@ -61,7 +61,7 @@ const Homepage: React.FC = () => {
       <Link to="/waiting?mode=safe" className="group relative flex-1 flex items-center justify-center bg-gray-900 text-white cursor-pointer transition-all duration-700 ease-in-out hover:flex-[1.5]">
         {/* Background Video for Safe Mode */}
         <video 
-          src="assets/safe-bg.mp4" 
+          src="../assets/safe-bg.mp4" 
           autoPlay 
           loop 
           muted 
@@ -87,7 +87,7 @@ const Homepage: React.FC = () => {
       <Link to="/waiting?mode=nsfw" className="group relative flex-1 flex items-center justify-center bg-black text-white cursor-pointer transition-all duration-700 ease-in-out hover:flex-[1.5]">
         {/* Background Video for NSFW Mode */}
         <video 
-          src="assets/nsfw-bg.mp4" 
+          src="../assets/nsfw-bg.mp4" 
           autoPlay 
           loop 
           muted
