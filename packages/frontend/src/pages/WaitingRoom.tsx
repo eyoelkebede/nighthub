@@ -33,7 +33,7 @@ const nouns = ['Fox', 'Panda', 'Rider', 'Ghost', 'Dragon', 'Ninja', 'Wizard'
 const generateRandomUsername = () => `${adjectives[Math.floor(Math.random() * adjectives.length)]} ${nouns[Math.floor(Math.random() * nouns.length)]}`;
 
 
-/// --- The Component ---
+// --- The Component ---
 const WaitingRoom: React.FC = () => {
     const [searchParams] = useSearchParams();
     const navigate = useNavigate();
@@ -48,6 +48,8 @@ const WaitingRoom: React.FC = () => {
     const [messages, setMessages] = useState<Message[]>([]);
     const [chatInput, setChatInput] = useState('');
     const [showInactivityModal, setShowInactivityModal] = useState(false);
+    // NEW: State to handle the pre-connection animation
+    const [isConnecting, setIsConnecting] = useState(false);
 
     const username = useMemo(() => generateRandomUsername(), []);
     const myIdRef = useRef<string>(uuidv4());
@@ -58,59 +60,46 @@ const WaitingRoom: React.FC = () => {
     const finalCountdownTimerRef = useRef<NodeJS.Timeout>();
 
     // --- Logic for Inactivity Timer ---
-    const resetInactivityTimer = useCallback(() => {
-        // Clear any existing timers
+    const handleUserActivity = useCallback(() => {
+        // Any activity hides the modal and resets the main timer.
+        setShowInactivityModal(false);
         clearTimeout(inactivityTimerRef.current);
-        clearTimeout(finalCountdownTimerRef.current);
-        
-        // If the modal is showing, hide it because we have activity
-        if (showInactivityModal) {
-            setShowInactivityModal(false);
-        }
-
-        // Set a new timer to show the modal after 1 minute of inactivity
         inactivityTimerRef.current = setTimeout(() => {
             console.log("User inactive, showing modal.");
             setShowInactivityModal(true);
         }, 60 * 1000); // 60 seconds
-    }, [showInactivityModal]);
+    }, []);
 
-    // This effect runs when the inactivity modal appears
+    // This effect runs when the inactivity modal appears to start the final countdown.
     useEffect(() => {
         if (showInactivityModal) {
-            // When the modal appears, start a new 15-second countdown to disconnect
             finalCountdownTimerRef.current = setTimeout(() => {
-                console.log("User did not respond to modal. Disconnecting.");
-                // Navigating away will trigger the component to unmount,
-                // which cleans up the WebSocket connection.
+                console.log("User did not respond to modal. Disconnecting by navigating home.");
                 navigate('/'); 
-            }, 15 * 1000); // 15 seconds
+            }, 15 * 1000); // 15 seconds to respond
         }
-        // Cleanup the final countdown if the component unmounts or modal is hidden
+        // Cleanup the final countdown if the user becomes active again
         return () => clearTimeout(finalCountdownTimerRef.current);
     }, [showInactivityModal, navigate]);
 
 
     // Effect to set up and tear down global event listeners for user activity
     useEffect(() => {
-        resetInactivityTimer(); // Start the timer when the component mounts
+        handleUserActivity(); // Start the timer on component mount
+        window.addEventListener('mousemove', handleUserActivity);
+        window.addEventListener('keypress', handleUserActivity);
+        window.addEventListener('click', handleUserActivity);
 
-        // Listen for these events on the whole window
-        window.addEventListener('mousemove', resetInactivityTimer);
-        window.addEventListener('keypress', resetInactivityTimer);
-        window.addEventListener('click', resetInactivityTimer);
-
-        // Cleanup function when the component unmounts
         return () => {
             clearTimeout(inactivityTimerRef.current);
             clearTimeout(finalCountdownTimerRef.current);
-            window.removeEventListener('mousemove', resetInactivityTimer);
-            window.removeEventListener('keypress', resetInactivityTimer);
-            window.removeEventListener('click', resetInactivityTimer);
+            window.removeEventListener('mousemove', handleUserActivity);
+            window.removeEventListener('keypress', handleUserActivity);
+            window.removeEventListener('click', handleUserActivity);
         };
-    }, [resetInactivityTimer]);
+    }, [handleUserActivity]);
     
-    // --- WebSocket and Message Logic (Unchanged) ---
+    // --- WebSocket and Message Logic ---
     useEffect(() => {
         if (isConnected) {
             sendMessage(JSON.stringify({ type: 'joinQueue', payload: { mode } }));
@@ -126,7 +115,13 @@ const WaitingRoom: React.FC = () => {
                     setStatusMessage('Searching for a partner...');
                     break;
                 case 'matchFound':
-                    navigate(`/chat/${lastMessage.payload.roomId}?mode=${mode}`);
+                    // NEW: Start the connection animation instead of navigating immediately
+                    setStatusMessage(`Match Found! Connecting...`);
+                    setIsConnecting(true);
+                    // Navigate to the chat room after a 5-second delay
+                    setTimeout(() => {
+                        navigate(`/chat/${lastMessage.payload.roomId}?mode=${mode}`);
+                    }, 5000); // 5 seconds
                     break;
                 case 'waitingRoomChat':
                     setMessages(prev => [...prev, { ...lastMessage.payload, type: 'chat' }]);
@@ -149,16 +144,28 @@ const WaitingRoom: React.FC = () => {
         }
     };
 
-    // --- JSX including the new Modal ---
+    // --- JSX including the new Modals ---
     return (
-        <div className="bg-gray-900 text-white min-h-screen flex flex-col md:flex-row font-sans">
+        <div className="bg-gray-900 text-white min-h-screen flex flex-col md:flex-row font-sans relative">
+            {/* Connecting... Overlay */}
+            {isConnecting && (
+                <div 
+                    className={`absolute inset-0 flex flex-col items-center justify-center z-50 transition-opacity duration-500
+                                bg-black bg-opacity-90 animate-pulse
+                                border-8 ${mode === 'safe' ? 'border-green-500' : 'border-red-500'}`}
+                >
+                    <h2 className="text-4xl font-bold">Match Found!</h2>
+                    <p className="mt-4 text-lg text-gray-300">Connecting you to your partner...</p>
+                </div>
+            )}
+            
             {/* Inactivity Modal Overlay */}
             {showInactivityModal && (
-                <div className="absolute inset-0 bg-black bg-opacity-80 flex flex-col items-center justify-center z-50 p-4 text-center">
+                <div className="absolute inset-0 bg-black bg-opacity-80 flex flex-col items-center justify-center z-40 p-4 text-center">
                     <h2 className="text-4xl font-bold">Are you still there?</h2>
                     <p className="mt-4 text-lg text-gray-300">Click the button below to stay in the queue.</p>
                     <button 
-                        onClick={resetInactivityTimer} // Clicking the button is activity
+                        onClick={handleUserActivity} // Clicking the button is activity
                         className="mt-8 bg-blue-600 text-white font-bold py-4 px-10 rounded-full hover:bg-blue-700 transition-colors text-xl"
                     >
                         I'm Still Here!
