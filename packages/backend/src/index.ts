@@ -117,40 +117,69 @@ wss.on('connection', (ws: WebSocket, req) => {
       const senderId = senderWs.id;
 
       switch(parsedMessage.type) {
-        case 'joinQueue': { /* ... as before ... */ break; }
-        case 'waitingRoomChat': { /* ... as before ... */ break; }
-        case 'chatMessage': { /* ... as before ... */ break; }
-        case 'requestNextPartner': { /* ... as before ... */ break; }
-
-        // --- NEW: Logic to handle a user report ---
+        // --- CORRECTED: Restored the full logic for all cases ---
+        case 'joinQueue': {
+          const mode = parsedMessage.payload.mode as 'safe' | 'nsfw';
+          senderWs.mode = mode;
+          const queue = mode === 'safe' ? safeQueue : nsfwQueue;
+          if (!queue.includes(senderId)) {
+            queue.push(senderId);
+          }
+          broadcastQueueUpdates(mode);
+          checkForMatch(mode);
+          break;
+        }
+        case 'waitingRoomChat': {
+            const senderMode = senderWs.mode;
+            if (!senderMode) return;
+            broadcastToWaitingRoom(parsedMessage, senderMode);
+            break;
+        }
+        case 'chatMessage': {
+          const partnerId = getPartnerId(senderId);
+          if (partnerId) {
+              const partnerWs = clients.get(partnerId);
+              if (partnerWs?.readyState === WebSocket.OPEN) {
+                partnerWs.send(JSON.stringify({
+                  type: 'chatMessage',
+                  payload: { message: parsedMessage.payload.message },
+                }));
+              }
+          }
+          break;
+        }
+        case 'requestNextPartner': {
+            const oldPartnerId = getPartnerId(senderId);
+            if (oldPartnerId) {
+                const oldPartnerWs = clients.get(oldPartnerId);
+                if (oldPartnerWs?.readyState === WebSocket.OPEN) {
+                    oldPartnerWs.send(JSON.stringify({ type: 'partnerDisconnected' }));
+                }
+            }
+            for (const [roomId, users] of rooms.entries()) {
+                if (users.includes(senderId)) { rooms.delete(roomId); break; }
+            }
+            const mode = senderWs.mode || 'safe';
+            senderWs.send(JSON.stringify({ type: 'requeued' }));
+            const queue = mode === 'safe' ? safeQueue : nsfwQueue;
+            if(!queue.includes(senderId)) queue.push(senderId);
+            checkForMatch(mode);
+            break;
+        }
         case 'reportUser': {
             const reporterId = senderId;
             const reportedPartnerId = getPartnerId(reporterId);
-
             if (reportedPartnerId) {
                 const reportedWs = clients.get(reportedPartnerId);
-
                 if (reportedWs) {
-                    // Log the incident for moderation review
-                    console.log(`🚨 USER REPORT: Reporter ${reporterId} (${senderWs.ip}) reported user ${reportedPartnerId} (${reportedWs.ip}).`);
-                    
-                    // Apply a 1-hour ban to the reported user's IP
+                    console.log(`🚨 USER REPORT: ${reporterId} reported ${reportedPartnerId}`);
                     const banDuration = 60 * 60 * 1000; // 1 hour
                     bannedIPs.set(reportedWs.ip, { unbanTime: Date.now() + banDuration, reason: "Reported by partner." });
-
-                    // Disconnect the reported user
-                    reportedWs.close(1008, "You have been reported for violating the Terms of Service and have been disconnected.");
+                    reportedWs.close(1008, "You have been reported and disconnected.");
                 }
-
-                // Send confirmation to the reporter, their frontend will handle the rest
                 senderWs.send(JSON.stringify({ type: 'reportConfirmed' }));
-
-                // Clean up the room
                 for (const [roomId, users] of rooms.entries()) {
-                    if (users.includes(reporterId)) {
-                        rooms.delete(roomId);
-                        break;
-                    }
+                    if (users.includes(reporterId)) { rooms.delete(roomId); break; }
                 }
             }
             break;
@@ -161,7 +190,31 @@ wss.on('connection', (ws: WebSocket, req) => {
     }
   });
 
-  ws.on('close', () => { /* ... as before ... */ });
+  ws.on('close', () => {
+    const clientId = (ws as ExtendedWebSocket).id;
+    console.log(`❌ Client disconnected: ${clientId}`);
+    const partnerId = getPartnerId(clientId);
+    if (partnerId) {
+      const partnerWs = clients.get(partnerId);
+      if (partnerWs?.readyState === WebSocket.OPEN) {
+        partnerWs.send(JSON.stringify({ type: 'partnerDisconnected' }));
+      }
+      for (const [roomId, users] of rooms.entries()) {
+        if (users.includes(clientId)) rooms.delete(roomId);
+      }
+    }
+    let index = safeQueue.indexOf(clientId);
+    if (index > -1) {
+      safeQueue.splice(index, 1);
+      broadcastQueueUpdates('safe');
+    }
+    index = nsfwQueue.indexOf(clientId);
+    if (index > -1) {
+      nsfwQueue.splice(index, 1);
+      broadcastQueueUpdates('nsfw');
+    }
+    clients.delete(clientId);
+  });
 });
 
 server.listen(port, () => {
