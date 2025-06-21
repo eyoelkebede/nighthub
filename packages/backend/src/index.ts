@@ -25,7 +25,6 @@ const clients = new Map<string, ExtendedWebSocket>();
 const safeQueue: string[] = [];
 const nsfwQueue: string[] = [];
 const rooms = new Map<string, string[]>();
-
 // --- Helper Functions ---
 
 const getPartnerId = (clientId: string): string | null => {
