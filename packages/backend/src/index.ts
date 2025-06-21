@@ -25,9 +25,9 @@ const port = process.env.PORT || 8080;
 
 // --- Environment Variables ---
 const DATABASE_URL = process.env.DATABASE_URL || "postgresql://nighthub:2URr-RxtqnmA-9QBToci5g@ragged-pony-12360.j77.cockroachlabs.cloud:26257/defaultdb?sslmode=verify-full";
-const STRIPE_SECRET_KEY = process.env.STRIPE_SECRET_KEY || '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';
-const STRIPE_WEBHOOK_SECRET = process.env.STRIPE_WEBHOOK_SECRET || 'whsec_...';
-const STRIPE_PRICE_ID = process.env.STRIPE_PRICE_ID || 'price_...';
+const STRIPE_SECRET_KEY = process.env.STRIPE_SECRET_KEY;
+const STRIPE_WEBHOOK_SECRET = process.env.STRIPE_WEBHOOK_SECRET;
+const STRIPE_PRICE_ID = process.env.STRIPE_PRICE_ID;
 const FRONTEND_URL = process.env.FRONTEND_URL || 'https://nighthub.io';
 
 // --- Database & Stripe Initialization ---
