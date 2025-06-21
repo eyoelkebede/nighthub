@@ -9,12 +9,6 @@ import { v4 as uuidv4 } from 'uuid';
 interface ExtendedWebSocket extends WebSocket {
   id: string;
   mode?: 'safe' | 'nsfw';
-  ip: string;
-}
-
-interface BanRecord {
-  unbanTime: number;
-  reason: string;
 }
 
 // --- Configuration ---
@@ -31,7 +25,6 @@ const clients = new Map<string, ExtendedWebSocket>();
 const safeQueue: string[] = [];
 const nsfwQueue: string[] = [];
 const rooms = new Map<string, string[]>();
-const bannedIPs = new Map<string, BanRecord>();
 
 // --- Helper Functions ---
 
@@ -46,12 +39,16 @@ const getPartnerId = (clientId: string): string | null => {
 
 const broadcastQueueUpdates = (mode: 'safe' | 'nsfw') => {
     const queue = mode === 'safe' ? safeQueue : nsfwQueue;
+    console.log(`Broadcasting queue update for ${mode} mode. Queue size: ${queue.length}`);
     queue.forEach((clientId, index) => {
         const ws = clients.get(clientId);
         if (ws && ws.readyState === WebSocket.OPEN) {
             ws.send(JSON.stringify({
               type: 'queueUpdate',
-              payload: { position: index + 1, total: queue.length },
+              payload: {
+                position: index + 1,
+                total: queue.length,
+              },
             }));
         }
     });
@@ -59,6 +56,8 @@ const broadcastQueueUpdates = (mode: 'safe' | 'nsfw') => {
 
 const checkForMatch = (mode: 'safe' | 'nsfw') => {
     const queue = mode === 'safe' ? safeQueue : nsfwQueue;
+    console.log(`Checking for match in ${mode} queue. Size: ${queue.length}`);
+
     while (queue.length >= 2) {
         const user1Id = queue.shift()!;
         const user2Id = queue.shift()!;
@@ -73,41 +72,39 @@ const checkForMatch = (mode: 'safe' | 'nsfw') => {
 
         const roomId = uuidv4();
         rooms.set(roomId, [user1Id, user2Id]);
-        user1Ws.mode = undefined;
+        user1Ws.mode = undefined; // No longer in a queue
         user2Ws.mode = undefined;
 
         console.log(`✅ Match found! Room: ${roomId}, Users: ${user1Id}, ${user2Id}`);
+        
         const matchFoundPayload = JSON.stringify({ type: 'matchFound', payload: { roomId } });
         if (user1Ws.readyState === WebSocket.OPEN) user1Ws.send(matchFoundPayload);
         if (user2Ws.readyState === WebSocket.OPEN) user2Ws.send(matchFoundPayload);
     }
+    
+    // Broadcast updates to the remaining people in the queue
     broadcastQueueUpdates(mode);
 };
+
 
 const broadcastToWaitingRoom = (message: object, mode: 'safe' | 'nsfw') => {
     const queue = mode === 'safe' ? safeQueue : nsfwQueue;
     const messageString = JSON.stringify(message);
-    queue.forEach(clientId => clients.get(clientId)?.send(messageString));
-};
+    queue.forEach(clientId => {
+        const ws = clients.get(clientId);
+        if (ws && ws.readyState === WebSocket.OPEN) {
+            ws.send(messageString);
+        }
+    });
+}
 
 // --- Main WebSocket Server Logic ---
 
-wss.on('connection', (ws: WebSocket, req) => {
-  const ip = req.headers['x-forwarded-for']?.toString().split(',')[0] || req.socket.remoteAddress || 'unknown';
-  
-  const banRecord = bannedIPs.get(ip);
-  if (banRecord && Date.now() < banRecord.unbanTime) {
-      ws.close(1008, `You are temporarily banned. Reason: ${banRecord.reason}`);
-      return;
-  }
-  bannedIPs.delete(ip);
-
+wss.on('connection', (ws: WebSocket) => {
   const clientId = uuidv4();
-  const extWs = ws as ExtendedWebSocket;
-  extWs.id = clientId;
-  extWs.ip = ip;
-  clients.set(clientId, extWs);
-  console.log(`✅ Client connected: ${clientId} from IP: ${ip}`);
+  (ws as ExtendedWebSocket).id = clientId;
+  clients.set(clientId, ws as ExtendedWebSocket);
+  console.log(`✅ Client connected: ${clientId}`);
 
   ws.on('message', (message) => {
     try {
@@ -117,24 +114,32 @@ wss.on('connection', (ws: WebSocket, req) => {
       const senderId = senderWs.id;
 
       switch(parsedMessage.type) {
-        // --- CORRECTED: Restored the full logic for all cases ---
         case 'joinQueue': {
           const mode = parsedMessage.payload.mode as 'safe' | 'nsfw';
           senderWs.mode = mode;
           const queue = mode === 'safe' ? safeQueue : nsfwQueue;
+          
           if (!queue.includes(senderId)) {
             queue.push(senderId);
           }
+          // The broadcast is now correctly called right after joining
           broadcastQueueUpdates(mode);
           checkForMatch(mode);
           break;
         }
+
         case 'waitingRoomChat': {
             const senderMode = senderWs.mode;
             if (!senderMode) return;
-            broadcastToWaitingRoom(parsedMessage, senderMode);
+            const { username, message: chatMessage } = parsedMessage.payload;
+            
+            broadcastToWaitingRoom({
+                type: 'waitingRoomChat',
+                payload: { senderId, username, message: chatMessage }
+            }, senderMode);
             break;
         }
+
         case 'chatMessage': {
           const partnerId = getPartnerId(senderId);
           if (partnerId) {
@@ -148,6 +153,7 @@ wss.on('connection', (ws: WebSocket, req) => {
           }
           break;
         }
+
         case 'requestNextPartner': {
             const oldPartnerId = getPartnerId(senderId);
             if (oldPartnerId) {
@@ -157,31 +163,16 @@ wss.on('connection', (ws: WebSocket, req) => {
                 }
             }
             for (const [roomId, users] of rooms.entries()) {
-                if (users.includes(senderId)) { rooms.delete(roomId); break; }
+                if (users.includes(senderId)) {
+                    rooms.delete(roomId);
+                    break;
+                }
             }
             const mode = senderWs.mode || 'safe';
             senderWs.send(JSON.stringify({ type: 'requeued' }));
             const queue = mode === 'safe' ? safeQueue : nsfwQueue;
             if(!queue.includes(senderId)) queue.push(senderId);
             checkForMatch(mode);
-            break;
-        }
-        case 'reportUser': {
-            const reporterId = senderId;
-            const reportedPartnerId = getPartnerId(reporterId);
-            if (reportedPartnerId) {
-                const reportedWs = clients.get(reportedPartnerId);
-                if (reportedWs) {
-                    console.log(`🚨 USER REPORT: ${reporterId} reported ${reportedPartnerId}`);
-                    const banDuration = 60 * 60 * 1000; // 1 hour
-                    bannedIPs.set(reportedWs.ip, { unbanTime: Date.now() + banDuration, reason: "Reported by partner." });
-                    reportedWs.close(1008, "You have been reported and disconnected.");
-                }
-                senderWs.send(JSON.stringify({ type: 'reportConfirmed' }));
-                for (const [roomId, users] of rooms.entries()) {
-                    if (users.includes(reporterId)) { rooms.delete(roomId); break; }
-                }
-            }
             break;
         }
       }
@@ -193,6 +184,7 @@ wss.on('connection', (ws: WebSocket, req) => {
   ws.on('close', () => {
     const clientId = (ws as ExtendedWebSocket).id;
     console.log(`❌ Client disconnected: ${clientId}`);
+
     const partnerId = getPartnerId(clientId);
     if (partnerId) {
       const partnerWs = clients.get(partnerId);
@@ -203,6 +195,7 @@ wss.on('connection', (ws: WebSocket, req) => {
         if (users.includes(clientId)) rooms.delete(roomId);
       }
     }
+    
     let index = safeQueue.indexOf(clientId);
     if (index > -1) {
       safeQueue.splice(index, 1);
@@ -213,6 +206,7 @@ wss.on('connection', (ws: WebSocket, req) => {
       nsfwQueue.splice(index, 1);
       broadcastQueueUpdates('nsfw');
     }
+
     clients.delete(clientId);
   });
 });
