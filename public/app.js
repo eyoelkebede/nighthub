@@ -175,8 +175,6 @@ function updateCallStatus(text, show = true) {
         else callStatusEl.style.display = 'none';
     }
 }
-const mediaInput = document.getElementById('media-input');
-
 // Settings
 const notifToggle = document.getElementById('notif-toggle');
 const soundToggle = document.getElementById('sound-toggle');
