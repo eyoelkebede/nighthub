@@ -1,0 +1,14 @@
+{
+  "name": "nighthub",
+  "version": "1.0.0",
+  "description": "A clone of Omegle called NIGHTHUB",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "dependencies": {
+    "express": "^4.18.2",
+    "socket.io": "^4.7.2",
+    "uuid": "^9.0.1"
+  }
+}
