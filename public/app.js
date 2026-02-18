@@ -498,7 +498,7 @@ let entertainmentChannels = []; // Dynamic list
 async function fetchPlaylist() {
     try {
         // Use the requested Amer M3U (Direct)
-        const response = await fetch('https://iptv-org.github.io/iptv/countries/us.m3u'); 
+        const response = await fetch('https://iptv-org.github.io/iptv/regions/noram.m3u'); 
         const text = await response.text();
         parseM3U(text);
     } catch (e) {
@@ -506,7 +506,7 @@ async function fetchPlaylist() {
         // Fallback or retry with proxy
         try {
             // Using allorigins raw endpoint which handles CORS correctly
-            const response = await fetch('https://api.allorigins.win/raw?url=' + encodeURIComponent('https://iptv-org.github.io/iptv/countries/us.m3u'));
+            const response = await fetch('https://api.allorigins.win/raw?url=' + encodeURIComponent('https://iptv-org.github.io/iptv/regions/amer.m3u'));
             if (!response.ok) throw new Error('Proxy error');
             const text = await response.text();
             parseM3U(text);
@@ -564,162 +564,88 @@ let activeSearch = '';
 let currentGroupUsername = 'You';
 
 function loadChannels() {
-    // Top-Level Wrappers
-    const newsList = document.getElementById('news-channels-list');
-    const entertainmentList = document.getElementById('entertainment-channels-list');
-    const sportsList = document.getElementById('sports-channels-list');
-    const allList = document.getElementById('channel-list'); // Existing fallback
-    const topList = document.getElementById('top-channels-list');
+    if (!channelList) return;
+    channelList.innerHTML = '';
     
-    // Clear all
-    [newsList, entertainmentList, sportsList, allList, topList].forEach(el => {
-        if (el) el.innerHTML = '';
+    // Add grid wrapper
+    channelList.className = 'channel-grid'; 
+    
+    // Filter logic
+    let displayChannels = entertainmentChannels.filter(ch => {
+        // Category Filter
+        const matchesCategory = activeFilter === 'all' || 
+            (ch.category && ch.category.toLowerCase().includes(activeFilter));
+            
+        // Search Filter
+        const matchesSearch = activeSearch === '' || 
+            ch.name.toLowerCase().includes(activeSearch.toLowerCase());
+            
+        return matchesCategory && matchesSearch;
     });
     
-    // If no channels yet
-    if (entertainmentChannels.length === 0) {
-        if (allList) allList.innerHTML = '<div style="padding:20px; color:#666">Loading Channels...</div>';
+    // Simple Viewer Count Simulation
+    if (globalViewerCount) {
+        // Random number between 1.2k and 5.8k for "feel"
+        globalViewerCount.textContent = '2.4k';
+    }
+    
+    // Limit for performance if too many
+    const limit = 100;
+    
+    if (displayChannels.length === 0) {
+        channelList.innerHTML = '<div style="text-align:center; padding:40px; color:#666">No channels found.</div>';
         return;
     }
-
-    // Helper to create card
-    const createCard = (ch, isFeatured = false) => {
+    
+    displayChannels.slice(0, limit).forEach(ch => {
         const div = document.createElement('div');
-        div.className = isFeatured ? 'netflix-card featured' : 'netflix-card';
+        div.className = 'tv-card';
         
         let imageContent;
         if (ch.logo) {
             imageContent = `<img src="${ch.logo}" alt="${ch.name}" loading="lazy" onerror="this.style.display='none';this.nextElementSibling.style.display='block'">
-                            <div class="fallback-color" style="display:none; background: #333; width:100%; height:100%"></div>`;
+                            <div class="fallback-text" style="display:none">${ch.name}</div>`;
         } else {
-             const hue = (ch.name.length * 13) % 360; 
-             imageContent = `<div class="fallback-color" style="background: hsl(${hue}, 60%, 25%); width:100%; height:100%"></div>`;
+             const hue = (ch.name.length * 13) % 360; // Deterministic color
+             imageContent = `<div class="fallback-color" style="background: hsl(${hue}, 60%, 40%); width:100%; height:100%"></div>
+                             <div class="fallback-text">${ch.name}</div>`;
         }
-
-        // Random match % for effect
-        const match = Math.floor(80 + Math.random() * 19);
 
         div.innerHTML = `
-            ${imageContent}
-            <div class="card-content">
-                <h4>${ch.name}</h4>
-                <div class="meta">
-                    <span class="match-score">${match}% Match</span>
-                    <span>HD</span>
-                    <span>${ch.category || 'TV'}</span>
+            <div class="tv-card-image">
+                ${imageContent}
+                <div class="card-glow"></div>
+                <div class="play-overlay">
+                    <svg width="32" height="32" viewBox="0 0 24 24" fill="white" stroke="none"><polygon points="5 3 19 12 5 21 5 3"></polygon></svg>
                 </div>
             </div>
+            <div class="tv-card-content">
+                <div class="tv-card-title">${ch.name}</div>
+                <div class="tv-card-subtitle">${ch.category || 'Live TV'}</div>
+            </div>
         `;
-        div.addEventListener('click', () => {
-             // Ranking Event
-             socket.emit('channel_view', ch.id);
-             joinChannel(ch);
-        });
-        return div;
-    };
-
-    // Populate Top Channels (Mock: first 10 for now until server data flows back)
-    entertainmentChannels.slice(0, 10).forEach(ch => {
-        if (topList) topList.appendChild(createCard(ch, true));
+        div.addEventListener('click', () => joinChannel(ch));
+        channelList.appendChild(div);
     });
-
-    // Populate Categories
-    entertainmentChannels.forEach(ch => {
-        const cat = (ch.category || '').toLowerCase();
-        
-        // News
-        if (cat.includes('news') && newsList) {
-            newsList.appendChild(createCard(ch));
-        }
-        // Entertainment / Movies
-        else if ((cat.includes('movie') || cat.includes('entertainment')) && entertainmentList) {
-            entertainmentList.appendChild(createCard(ch));
-        }
-        // Sports
-        else if (cat.includes('sport') && sportsList) {
-            sportsList.appendChild(createCard(ch));
-        }
-        // Default All List (Limit to 50 to avoid DOM overload)
-        if (allList && allList.childElementCount < 50) {
-            allList.appendChild(createCard(ch));
-        }
-    });
+    
+if (entertainmentChannels.length === 0) {
+     channelList.innerHTML = '<div style="text-align:center; padding:40px; color:#666">Loading Channels...</div>';
+}
 } // End loadChannels
 
-// --- Broadcast Logic ---
-const liveBroadcastsList = document.getElementById('live-broadcasts-list');
-let isBroadcasting = false;
-
-function refreshBroadcasts(list) {
-    if (!liveBroadcastsList) return;
-    liveBroadcastsList.innerHTML = '';
-    
-    if (list.length === 0) {
-        liveBroadcastsList.innerHTML = '<div class="empty-state-card" style="padding: 20px; color #666;">No active user broadcasts.</div>';
-        return;
-    }
-    
-    list.forEach(item => {
-        const card = document.createElement('div');
-        card.className = 'netflix-card user-stream-card';
-        card.innerHTML = `
-            <div class="fallback-color" style="background: #222; width:100%; height:100%; display:flex; align-items:center; justify-content:center;">
-                <svg width="40" height="40" viewBox="0 0 24 24" fill="#ff453a"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-2 14.5v-9l6 4.5-6 4.5z"/></svg>
-            </div>
-            <div class="user-stream-badge">LIVE</div>
-            <div class="card-content">
-                <h4>${item.username || 'Anonymous'}</h4>
-                <div class="meta">
-                    <span style="color:white">${item.description}</span>
-                </div>
-            </div>
-        `;
-        card.addEventListener('click', () => {
-             // For MVP: Join as a chat member first (video requires rewrite)
-             joinBroadcast(item);
-        });
-        liveBroadcastsList.appendChild(card);
-    });
-}
-
-function joinBroadcast(item) {
-    // Treat as joining a group channel but show video placeholder
-    joinChannel({
-        id: item.roomId,
-        name: item.username + "'s Stream",
-        url: '', // No M3U URL
-        isUserStream: true
-    });
-}
-
-function toggleBroadcast() {
-    if (!isConnected) return;
-    if (isBroadcasting) {
-        socket.emit('stop_broadcast');
-        isBroadcasting = false;
-        if (broadcastBtn) broadcastBtn.style.color = 'white';
+function toggleChat(show) {
+    if (!liveChatPanel) return;
+    if (show) {
+        liveChatPanel.classList.remove('hidden');
+        if (groupInput) setTimeout(() => groupInput.focus(), 100);
     } else {
-        const desc = prompt("Enter a description for your stream:", "Just chilling");
-        if (desc) {
-            socket.emit('start_broadcast', { description: desc });
-            isBroadcasting = true;
-            if (broadcastBtn) broadcastBtn.style.color = '#ff453a';
-        }
+        liveChatPanel.classList.add('hidden');
     }
 }
 
-// Add Broadcast Listeners
-socket.on('broadcast_list', (list) => refreshBroadcasts(list));
-socket.on('broadcast_added', () => socket.emit('list_broadcasts')); // Refresh
-socket.on('broadcast_removed', () => socket.emit('list_broadcasts'));
-
-// Poll for broadcasts occasionally
-setInterval(() => {
-    if (socket.connected) socket.emit('list_broadcasts');
-}, 10000);
-
-// Initial Poll
-setTimeout(() => { if (socket.connected) socket.emit('list_broadcasts'); }, 1000);
+// Event Listeners for Chat
+if (toggleChatBtn) toggleChatBtn.addEventListener('click', () => toggleChat(true));
+if (closeChatBtn) closeChatBtn.addEventListener('click', () => toggleChat(false));
 
 // --- Dictionary & Username Logic ---
 const SAFE_WORDS = [
@@ -750,34 +676,14 @@ function joinChannel(channel) {
     // Scroll to top
     window.scrollTo({ top: 0, behavior: 'instant' });
     
-    if (channelNameDisplay) channelNameDisplay.textContent = channel.name;
-
-    // Handle User Streams vs IPTV
-    if (channel.isUserStream) {
-        // Stop any IPTV playback
-        if (hls) { hls.destroy(); hls = null; }
-        if (iptvPlayer) {
-            iptvPlayer.pause();
-            iptvPlayer.removeAttribute('src'); // Clear
-            iptvPlayer.load();
-            
-            // Show placeholder or specialized UI
-            iptvPlayer.poster = "https://media.giphy.com/media/l41lFw057lAJcYt0I/giphy.gif"; // Static until we implement WebRTC viewing
-            // Notify user
-            channelNameDisplay.innerHTML = `${channel.name} <span class="live-badge" style="background:#ff453a">USER LIVE</span>`;
-            
-            // In a real implementation, we would initiate WebRTC as a viewer here.
-            // socket.emit('join_broadcast', channel.id);
-            alert("This is a live user broadcast. Video functionality requires WebRTC rewrite. You are now in their chat!");
-        }
-    } else {
-        // Play Regular IPTV
-        playStream(channel.url);
-    }
+    // Play Video
+    playStream(channel.url);
     
     // Join Chat Room
     const username = generateUsername(); 
     currentGroupUsername = username;
+
+    if (channelNameDisplay) channelNameDisplay.textContent = channel.name;
     
     currentGroupId = channel.id; // Treat channel ID as group ID
     socket.emit('join_group', { groupId: channel.id, username });
@@ -1121,21 +1027,6 @@ if (notifToggle) notifToggle.addEventListener('change', () => localStorage.setIt
 if (videoCallBtn) videoCallBtn.addEventListener('click', () => initiateCall('video'));
 if (audioCallBtn) audioCallBtn.addEventListener('click', () => initiateCall('audio'));
 if (endCallBtn) endCallBtn.addEventListener('click', endCall);
-
-const broadcastBtn = document.getElementById('broadcast-toggle-btn');
-if (broadcastBtn) {
-    broadcastBtn.addEventListener('click', () => {
-        toggleBroadcast();
-        // Visual Feedback
-        if (isBroadcasting) {
-            broadcastBtn.style.background = 'rgba(255, 69, 58, 0.2)';
-            broadcastBtn.querySelector('span:last-child').textContent = 'Live';
-        } else {
-             broadcastBtn.style.background = '';
-             broadcastBtn.querySelector('span:last-child').textContent = 'Go Live';
-        }
-    });
-}
 if (acceptCallBtn) acceptCallBtn.addEventListener('click', handleAcceptCall);
 if (declineCallBtn) {
     declineCallBtn.addEventListener('click', () => {

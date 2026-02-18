@@ -21,86 +21,18 @@ const fs = require('fs');
 // State management
 let textQueue = [];
 const userMap = new Map(); // socket.id -> { room, type, partnerId, username, ip }
-const groups = new Map(); // groupId -> { id, name, users: Set() }
 const chatLogs = new Map(); // roomId -> [{ sender, text, timestamp }]
-const channelViews = new Map(); // channelId -> count (Ranking System)
-const broadcasts = new Map(); // socket.id -> { roomId, username, description, viewers: 0 }
 
 // Create uploads directory on start
 if (!fs.existsSync(path.join(__dirname, 'public/uploads'))) {
     fs.mkdirSync(path.join(__dirname, 'public/uploads'), { recursive: true });
 }
 
-// Initialize some default groups
-const defaultGroups = ['General', 'Gaming', 'Music', 'Tech', 'Anime', 'Politics', 'LGBTQ+'];
-defaultGroups.forEach(name => {
-    const id = name.toLowerCase();
-    groups.set(id, { id, name, users: new Set() });
-});
-
 io.on('connection', (socket) => {
     const clientIp = socket.handshake.address;
     console.log(`A user connected: ${socket.id} from ${clientIp}`);
 
-    // --- Ranking & Broadcasts ---
-    socket.on('channel_view', (channelId) => {
-        const current = channelViews.get(channelId) || 0;
-        channelViews.set(channelId, current + 1);
-        // Optional: clean up old channels or persistence
-    });
-    
-    socket.on('get_top_channels', () => {
-        // Sort by views
-        const sorted = [...channelViews.entries()]
-            .sort((a, b) => b[1] - a[1])
-            .slice(0, 10)
-            .map(([id, count]) => ({ id, count }));
-        socket.emit('top_channels', sorted);
-    });
-
-    socket.on('start_broadcast', ({ description }) => {
-        const userData = userMap.get(socket.id);
-        if (!userData || !userData.room) return;
-        
-        // Mark as broadcast
-        broadcasts.set(socket.id, {
-            roomId: userData.room,
-            username: userData.username || 'Anonymous',
-            description: description || 'Live Chat',
-            viewers: 0
-        });
-        
-        io.emit('broadcast_added', {
-             id: socket.id,
-             username: userData.username,
-             description: description
-        });
-    });
-    
-    socket.on('stop_broadcast', () => {
-        if (broadcasts.has(socket.id)) {
-            broadcasts.delete(socket.id);
-            io.emit('broadcast_removed', socket.id);
-        }
-    });
-
-    socket.on('list_broadcasts', () => {
-        const list = Array.from(broadcasts.entries()).map(([id, data]) => ({
-            id, 
-            ...data
-        }));
-        socket.emit('broadcast_list', list);
-    });
-
-    socket.on('disconnect', () => {
-        cleanupUser(socket);
-        if (broadcasts.has(socket.id)) {
-            broadcasts.delete(socket.id);
-            io.emit('broadcast_removed', socket.id);
-        }
-    });
-
-    // --- Search Logic ---
+    // --- Random Chat Logic ---
     socket.on('search', ({ type, userId, interests }) => {
         cleanupUser(socket);
         const userIdentifier = userId || socket.id;
@@ -180,58 +112,6 @@ io.on('connection', (socket) => {
         }
     }
 
-    // --- Group Chat Events ---
-    socket.on('list_groups', () => {
-        const groupList = Array.from(groups.values()).map(g => ({
-            id: g.id,
-            name: g.name,
-            count: g.users.size
-        }));
-        socket.emit('groups_list', groupList);
-    });
-
-    socket.on('create_group', (groupName) => {
-        if (!groupName || groupName.length > 20) return; // Simple validation
-        
-        const id = uuidv4(); 
-        groups.set(id, { id, name: groupName, users: new Set() });
-        
-        socket.emit('group_created', id);
-        io.emit('groups_update', { id, name: groupName, count: 0 }); 
-    });
-
-    socket.on('join_group', ({ groupId, username }) => {
-        cleanupUser(socket); 
-        
-        // Auto-create group if it doesn't exist (supports dynamic channels)
-        let group = groups.get(groupId);
-        if (!group) {
-            // For channels, we might want a friendly name. 
-            // Since we don't send name from client, we'll use ID or a default.
-            // Actually, for channels the name is displayed on client based on ID.
-            // Server just needs to track users.
-            group = { id: groupId, name: 'Channel ' + groupId, users: new Set() };
-            groups.set(groupId, group);
-        }
-
-        if (group) {
-            socket.join(groupId);
-            group.users.add(socket.id);
-            const user = username || 'Anonymous';
-            userMap.set(socket.id, { room: groupId, type: 'group', username: user });
-
-            socket.emit('group_joined', { id: group.id, name: group.name });
-            
-            socket.to(groupId).emit('message', {
-                sender: 'System',
-                text: `${user} has joined the chat.` // "System" message updated
-            });
-
-            // Update user counts globally (optional for channels)
-            // io.emit('group_count_update', { id: groupId, count: group.users.size });
-        }
-    });
-
     // --- Universal Messaging ---
     socket.on('message', (msg) => {
         const userData = userMap.get(socket.id);
@@ -309,12 +189,6 @@ io.on('connection', (socket) => {
              
              if (userData.type === 'random') {
                  // Log it
-                 const logs = chatLogs.get(userData.room) || [];
-                 logs.push({ sender: socket.id, media: relativePath, timestamp: new Date().toISOString() });
-                 chatLogs.set(userData.room, logs);
-                 
-                 socket.to(userData.room).emit('message', msgData);
-                 // Send back to sender so they see it
                  socket.emit('message', { ...msgData, sender: 'You' });
              } else if (userData.type === 'group') {
                  socket.to(userData.room).emit('message', msgData);
@@ -473,22 +347,6 @@ function cleanupUser(socket) {
                 partnerSocket.leave(userData.room);
                 partnerSocket.emit('partner_disconnected');
                 userMap.set(partnerSocket.id, { ...userMap.get(partnerSocket.id), room: null, partnerId: null });
-            }
-        } else if (userData.type === 'group' && userData.room) {
-            const group = groups.get(userData.room);
-            if (group) {
-                group.users.delete(socket.id);
-                socket.to(userData.room).emit('message', {
-                    sender: 'System',
-                    text: `${userData.username} left.`
-                });
-                io.emit('group_count_update', { id: userData.room, count: group.users.size });
-                
-                if (group.users.size === 0 && !defaultGroups.includes(group.name)) {
-                   // Optional: clean up empty custom groups
-                   groups.delete(group.id);
-                   io.emit('group_removed', group.id);
-                }
             }
         }
 
