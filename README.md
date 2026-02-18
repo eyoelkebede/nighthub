@@ -1,6 +1,6 @@
-# NIGHTHUB
+# BNTR
 
-NIGHTHUB is an open-source clone of the popular anonymous chat platform Omegle. It allows users to chat with strangers via text or video in a randomly paired environment.
+BNTR is an anonymous chat and streaming platform. It allows users to chat with strangers via text or video in a randomly paired environment.
 
 ## Features
 
