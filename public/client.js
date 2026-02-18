@@ -1,4 +1,7 @@
-const socket = io();
+// REPLACE 'https://your-app-name.onrender.com' with your actual Render URL after deployment
+const socket = io('https://bntr.onrender.com', {
+    transports: ['websocket', 'polling']
+});
 
 // Persistent User Identity
 let myUserId = localStorage.getItem('nighthub_user_id');
