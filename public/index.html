@@ -7,6 +7,7 @@
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
     <title>NIGHTHUB - Talk to Strangers</title>
     <link rel="stylesheet" href="style.css">
+    <link rel="stylesheet" href="netflix.css">
     <script src="https://cdn.jsdelivr.net/npm/hls.js@latest"></script>
     <script src="/socket.io/socket.io.js"></script>
     <script src="https://webrtc.github.io/adapter/adapter-latest.js"></script>
@@ -145,36 +146,75 @@
             <!-- TAB 2: ENTERTAINMENT (WATCH) -->
             <section id="tab-watch" class="tab-view hidden">
                 <!-- Channel Selector / Lobby -->
-                <div id="watch-lobby" class="view-state active">
-
-                    <nav class="tv-nav-bar">
-                        <!-- Brand removed as requested -->
-                        <!-- Categories / Filter -->
-                        <div id="category-scroller" class="tv-categories">
-                            <span class="category-pill active" data-filter="all">All Channels</span>
-                            <span class="category-pill" data-filter="news">News</span>
-                            <span class="category-pill" data-filter="movie">Movies</span>
-                            <span class="category-pill" data-filter="sport">Sports</span>
-                            <span class="category-pill" data-filter="music">Music</span>
-                            <span class="category-pill" data-filter="kids">Kids</span>
-                            <span class="category-pill" data-filter="doc">Documentary</span>
-                        </div>
-                        
-                        <div class="tv-actions">
-                            <!-- Search Toggle Button -->
-                            <button id="search-toggle-btn" class="tv-icon-btn">
-                                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><circle cx="11" cy="11" r="8"></circle><line x1="21" y1="21" x2="16.65" y2="16.65"></line></svg>
+                <div id="watch-lobby" class="view-state active netflix-style">
+                    
+                    <div class="netflix-hero">
+                        <div class="hero-content">
+                            <h1>Trending Now</h1>
+                            <p>Watch live streams from users worldwide or tune into global TV channels.</p>
+                            <button id="hero-play-btn" class="netflix-btn primary">
+                                <svg width="24" height="24" viewBox="0 0 24 24" fill="currentColor"><polygon points="5 3 19 12 5 21 5 3"></polygon></svg>
+                                Play First
                             </button>
-                            <!-- Collapsible Search Container -->
-                            <div id="search-container-wrapper" class="search-wrapper hidden">
-                                <div class="search-container">
-                                    <input type="text" id="channel-search" class="tv-search-input" placeholder="Search channels...">
-                                </div>
+                        </div>
+                    </div>
+
+                    <div class="netflix-rows">
+                        <!-- Live User Streams -->
+                        <div class="row-header">
+                            <h3>Live User Broadcasts</h3>
+                            <button class="view-all-btn">View All</button>
+                        </div>
+                        <div id="live-broadcasts-row" class="netflix-row-container">
+                            <div class="netflix-row" id="live-broadcasts-list">
+                                <!-- User streams injected here -->
+                                <div class="empty-state-card">No users are live right now.</div>
                             </div>
                         </div>
-                    </nav>
-                    <div id="channel-list" class="scroll-list">
-                        <!-- Channels injected by JS -->
+
+                        <!-- Top Rated Channels -->
+                        <div class="row-header">
+                            <h3>Top Rated Channels</h3>
+                        </div>
+                        <div id="top-channels-row" class="netflix-row-container">
+                            <div class="netflix-row" id="top-channels-list">
+                                <!-- Top channels -->
+                            </div>
+                        </div>
+
+                        <!-- Categories -->
+                        <div class="row-header">
+                            <h3>News & Information</h3>
+                        </div>
+                        <div id="news-channels-row" class="netflix-row-container">
+                            <div class="netflix-row" id="news-channels-list"></div>
+                        </div>
+
+                         <div class="row-header">
+                            <h3>Movies & Entertainment</h3>
+                        </div>
+                        <div id="entertainment-channels-row" class="netflix-row-container">
+                            <div class="netflix-row" id="entertainment-channels-list"></div>
+                        </div>
+                        
+                         <div class="row-header">
+                            <h3>Sports</h3>
+                        </div>
+                        <div id="sports-channels-row" class="netflix-row-container">
+                            <div class="netflix-row" id="sports-channels-list"></div>
+                        </div>
+
+                        <!-- All Channels Grid (Fallback) -->
+                        <div class="row-header">
+                            <h3>All Channels</h3>
+                            <!-- Search -->
+                            <div class="inline-search">
+                                <input type="text" id="channel-search" placeholder="Search...">
+                            </div>
+                        </div>
+                        <div id="channel-list" class="channel-grid">
+                            <!-- All channels injected here (limited) -->
+                        </div>
                     </div>
                 </div>
 
@@ -298,6 +338,12 @@
                     <svg width="28" height="28" viewBox="0 0 24 24" fill="white" stroke="white" stroke-width="2"><path d="M10.68 13.31a16 16 0 0 0 3.41 2.6l1.27-1.27a2 2 0 0 1 2.11-.45 12.84 12.84 0 0 0 2.81.7 2 2 0 0 1 1.72 2v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.42 19.42 0 0 1-3.33-2.67m-2.67-3.34a19.79 19.79 0 0 1-3.07-8.63A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72 12.84 12.84 0 0 0 .7 2.81 2 2 0 0 1-.45 2.11L8.09 9.91"></path></svg>
                 </button>
             </div>
+            
+            <!-- Broadcast Toggle (Top Right) -->
+            <button id="broadcast-toggle-btn" class="control-btn" style="position: absolute; top: 20px; right: 20px; z-index: 2000; width: auto; padding: 0 15px; border-radius: 20px; font-size: 14px; gap: 8px;">
+                <span class="record-dot" style="width: 10px; height: 10px; background: red; border-radius: 50%; display: inline-block;"></span>
+                <span>Go Live</span>
+            </button>
         </div>
         
         <!-- File Input for Media -->

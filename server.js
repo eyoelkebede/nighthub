@@ -23,6 +23,8 @@ let textQueue = [];
 const userMap = new Map(); // socket.id -> { room, type, partnerId, username, ip }
 const groups = new Map(); // groupId -> { id, name, users: Set() }
 const chatLogs = new Map(); // roomId -> [{ sender, text, timestamp }]
+const channelViews = new Map(); // channelId -> count (Ranking System)
+const broadcasts = new Map(); // socket.id -> { roomId, username, description, viewers: 0 }
 
 // Create uploads directory on start
 if (!fs.existsSync(path.join(__dirname, 'public/uploads'))) {
@@ -40,7 +42,65 @@ io.on('connection', (socket) => {
     const clientIp = socket.handshake.address;
     console.log(`A user connected: ${socket.id} from ${clientIp}`);
 
-    // --- Random Chat Logic ---
+    // --- Ranking & Broadcasts ---
+    socket.on('channel_view', (channelId) => {
+        const current = channelViews.get(channelId) || 0;
+        channelViews.set(channelId, current + 1);
+        // Optional: clean up old channels or persistence
+    });
+    
+    socket.on('get_top_channels', () => {
+        // Sort by views
+        const sorted = [...channelViews.entries()]
+            .sort((a, b) => b[1] - a[1])
+            .slice(0, 10)
+            .map(([id, count]) => ({ id, count }));
+        socket.emit('top_channels', sorted);
+    });
+
+    socket.on('start_broadcast', ({ description }) => {
+        const userData = userMap.get(socket.id);
+        if (!userData || !userData.room) return;
+        
+        // Mark as broadcast
+        broadcasts.set(socket.id, {
+            roomId: userData.room,
+            username: userData.username || 'Anonymous',
+            description: description || 'Live Chat',
+            viewers: 0
+        });
+        
+        io.emit('broadcast_added', {
+             id: socket.id,
+             username: userData.username,
+             description: description
+        });
+    });
+    
+    socket.on('stop_broadcast', () => {
+        if (broadcasts.has(socket.id)) {
+            broadcasts.delete(socket.id);
+            io.emit('broadcast_removed', socket.id);
+        }
+    });
+
+    socket.on('list_broadcasts', () => {
+        const list = Array.from(broadcasts.entries()).map(([id, data]) => ({
+            id, 
+            ...data
+        }));
+        socket.emit('broadcast_list', list);
+    });
+
+    socket.on('disconnect', () => {
+        cleanupUser(socket);
+        if (broadcasts.has(socket.id)) {
+            broadcasts.delete(socket.id);
+            io.emit('broadcast_removed', socket.id);
+        }
+    });
+
+    // --- Search Logic ---
     socket.on('search', ({ type, userId, interests }) => {
         cleanupUser(socket);
         const userIdentifier = userId || socket.id;
