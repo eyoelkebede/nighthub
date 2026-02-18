@@ -268,6 +268,12 @@ function switchTab(tabName) {
 
 const stopRandomBtn = document.getElementById('stop-random-btn');
 const interestInput = document.getElementById('interest-tags');
+const searchingOverlay = document.getElementById('searching-overlay');
+const cancelSearchBtn = document.getElementById('cancel-search-btn');
+
+if (cancelSearchBtn) {
+    cancelSearchBtn.addEventListener('click', stopConnecting);
+}
 
 // --- Random Chat Logic ---
 if (startRandomBtn) startRandomBtn.addEventListener('click', startRandomChat);
@@ -277,6 +283,7 @@ if (stopRandomBtn) stopRandomBtn.addEventListener('click', stopConnecting);
 function startRandomChat() {
     if (randomIntro) randomIntro.classList.add('hidden');
     if (randomChatInterface) randomChatInterface.classList.remove('hidden');
+    if (searchingOverlay) searchingOverlay.classList.remove('hidden');
     if (randomMessages) randomMessages.innerHTML = '';
     
     // Get Interests
@@ -298,9 +305,12 @@ function stopConnecting() {
     }
     // Return to intro
     if (randomChatInterface) randomChatInterface.classList.add('hidden');
+    if (searchingOverlay) searchingOverlay.classList.add('hidden');
     if (randomIntro) randomIntro.classList.remove('hidden');
 }
+if (searchingOverlay) searchingOverlay.classList.remove('hidden');
 
+    
 function nextRandomChat() {
     if (isConnected) {
         socket.emit('leave');
@@ -467,14 +477,29 @@ if (categoryPills) {
     });
 }
 
-if (randomChatForm) {
-    randomChatForm.addEventListener('submit', (e) => {
+    if (randomChatForm) {
+    randomChatForm.addEventListener('submit', async (e) => {
         e.preventDefault();
         const text = randomInput.value.trim();
         if (text && isConnected) {
-            socket.emit('message', text);
-            socket.emit('typing', false); // Stop typing immediately on send
-            addMessage('You', text, 'me', randomMessages);
+            
+            let payload = { text };
+            if (sharedSecretKey) {
+                try {
+                    const encrypted = await encryptMessage(text);
+                    payload = { encrypted };
+                    addMessage('You', text, 'me', randomMessages); // Local echo
+                } catch (e) {
+                     console.error("Encrypt fail", e);
+                     payload = { text };
+                     addMessage('You', text + ' (Unencrypted)', 'me', randomMessages);
+                }
+            } else {
+                 addMessage('You', text, 'me', randomMessages);
+            }
+
+            socket.emit('message', payload);
+            socket.emit('typing', false); 
             randomInput.value = '';
         }
     });
@@ -832,7 +857,14 @@ function addSystemMessage(text, container) {
 }
 
 function updateRandomStatus(text) {
-    if (randomHeaderInfo) randomHeaderInfo.textContent = text;
+    if (randomHeaderInfo) {
+        randomHeaderInfo.textContent = text;
+        if (text === 'Searching...') {
+            randomHeaderInfo.classList.add('pulsing-text');
+        } else {
+            randomHeaderInfo.classList.remove('pulsing-text');
+        }
+    }
 }
 
 // --- Game State ---
@@ -895,6 +927,7 @@ function getEmoji(move) {
 
 socket.on('partner_found', ({ roomId, commonInterests }) => {
     isConnected = true;
+    if (searchingOverlay) searchingOverlay.classList.add('hidden');
     setRandomChatState(true);
     updateRandomStatus('Stranger');
     
@@ -906,10 +939,16 @@ socket.on('partner_found', ({ roomId, commonInterests }) => {
     }
 });
 
-socket.on('message', (msg) => {
+socket.on('message', async (msg) => {
     const isGroup = msg.isGroup;
     const container = isGroup ? groupMessages : randomMessages;
     
+    // Decrypt if necessary
+    let displayText = msg.text;
+    if (msg.encrypted) {
+        displayText = await decryptMessage(msg.encrypted);
+    }
+
     if (msg.media) {
         // Render media
         const div = document.createElement('div');
@@ -941,7 +980,7 @@ socket.on('message', (msg) => {
     const typInd = document.getElementById('typing-indicator-' + (isGroup ? 'group' : 'random'));
     if (typInd) typInd.remove();
 
-    addMessage(msg.sender, msg.text, msg.sender === 'You' ? 'me' : 'them', container);
+    addMessage(msg.sender, displayText, msg.sender === 'You' ? 'me' : 'them', container);
     if (soundToggle && soundToggle.checked && msg.sender !== 'You') playMessageSound();
 });
 

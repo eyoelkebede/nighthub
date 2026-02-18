@@ -279,6 +279,14 @@ io.on('connection', (socket) => {
         }
     });
 
+    // --- Key Exchange ---
+    socket.on('exchange_key', (data) => {
+        const userData = userMap.get(socket.id);
+        if (userData && userData.partnerId) {
+            io.to(userData.partnerId).emit('exchange_key', data);
+        }
+    });
+
     socket.on('end_call', () => {
         const userData = userMap.get(socket.id);
         if (userData && userData.partnerId) {
