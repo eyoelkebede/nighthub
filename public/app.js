@@ -181,8 +181,54 @@ function updateCallStatus(text, show = true) {
 // Settings
 const notifToggle = document.getElementById('notif-toggle');
 const soundToggle = document.getElementById('sound-toggle');
+const themeToggle = document.getElementById('theme-toggle');
+const settingsBtn = document.getElementById('settings-btn');
+const controlCenter = document.getElementById('control-center');
 const userIdDisplay = document.getElementById('user-id-display');
 const clearDataBtn = document.getElementById('clear-data-btn');
+
+// --- Initialization ---
+// Theme Loading
+const savedTheme = localStorage.getItem('nighthub_theme');
+if (savedTheme === 'light') {
+    document.body.classList.add('light-theme');
+    if(themeToggle) themeToggle.checked = false; // "Dark Switch" is off -> Light mode
+} else {
+    // Default Dark
+    if(themeToggle) themeToggle.checked = true; // "Dark Switch" is on -> Dark mode
+}
+
+// Control Center Logic
+if (settingsBtn) {
+    settingsBtn.addEventListener('click', (e) => {
+        controlCenter.classList.toggle('hidden');
+        e.stopPropagation();
+    });
+}
+
+// Close Dropdown when clicking outside
+document.addEventListener('click', (e) => {
+    if (controlCenter && !controlCenter.classList.contains('hidden')) {
+        if (!controlCenter.contains(e.target) && !settingsBtn.contains(e.target)) {
+            controlCenter.classList.add('hidden');
+        }
+    }
+});
+
+// Theme Toggle
+if (themeToggle) {
+    themeToggle.addEventListener('change', (e) => {
+        if (e.target.checked) {
+            // Dark Mode
+            document.body.classList.remove('light-theme');
+            localStorage.setItem('nighthub_theme', 'dark');
+        } else {
+            // Light Mode
+            document.body.classList.add('light-theme');
+            localStorage.setItem('nighthub_theme', 'light');
+        }
+    });
+}
 
 // --- State ---
 let currentTab = 'random';
@@ -1148,6 +1194,13 @@ async function initiateCall(type) {
     if (!isConnected) return;
     activeCallType = type;
     
+    // Update UI for Audio Mode
+    if (type === 'audio') {
+        callOverlay.classList.add('audio-mode');
+    } else {
+        callOverlay.classList.remove('audio-mode');
+    }
+
     try {
         await startLocalStream(type === 'video');
         createPeerConnection();
@@ -1248,12 +1301,23 @@ function endCall() {
         peerConnection = null;
     }
     callOverlay.classList.add('hidden');
+    callOverlay.classList.remove('audio-mode', 'chat-open'); // Reset UI
+    const chatLayer = document.getElementById('call-chat-layer');
+    if (chatLayer) chatLayer.classList.add('hidden');
+    
     stopRing();
 }
 
 socket.on('incoming_call', ({ signal, type }) => {
     activeCallType = type;
     pendingOffer = signal;
+    
+    // Set Mode
+    if (type === 'audio') {
+        callOverlay.classList.add('audio-mode');
+    } else {
+        callOverlay.classList.remove('audio-mode');
+    }
     
     // callOverlay.classList.remove('hidden'); // Don't show call screen yet
     incomingCallModal.classList.remove('hidden');
@@ -1280,9 +1344,83 @@ socket.on('call_ended', () => {
     endCall();
 });
 
+// --- In-Call Chat Logic ---
+const toggleChatBtnInCall = document.getElementById('toggle-call-chat-btn');
+const callChatLayer = document.getElementById('call-chat-layer');
+const callChatForm = document.getElementById('call-chat-form');
+const callChatInput = document.getElementById('call-chat-input');
+const callChatMessages = document.getElementById('call-chat-messages');
+
+if (toggleChatBtnInCall) {
+    toggleChatBtnInCall.addEventListener('click', () => {
+        if (!callChatLayer) return;
+        
+        const isHidden = callChatLayer.classList.contains('hidden');
+        if (isHidden) {
+            callChatLayer.classList.remove('hidden');
+            if (callOverlay) callOverlay.classList.add('chat-open');
+            setTimeout(() => callChatInput && callChatInput.focus(), 100);
+        } else {
+            callChatLayer.classList.add('hidden');
+            if (callOverlay) callOverlay.classList.remove('chat-open');
+        }
+    });
+}
+
+// Intercept AddMessage for Sync
+const _originalAddMessage = window.addMessage || addMessage;
+window.addMessage = function(sender, text, type, container) {
+    _originalAddMessage(sender, text, type, container);
+    
+    // Sync to overlay
+    if (callChatMessages && currentMode === 'random') {
+        const div = document.createElement('div');
+        div.classList.add('message');
+        if (sender === 'You') div.classList.add('you');
+        else div.classList.add('stranger');
+        
+        let content = '';
+        if (sender !== 'You' && sender !== 'Stranger') {
+            content += `<div class="sender-name">${sender}</div>`;
+        }
+        content += `<div class="msg-text">${text}</div>`;
+        div.innerHTML = content;
+        
+        callChatMessages.appendChild(div);
+        callChatMessages.scrollTop = callChatMessages.scrollHeight;
+    }
+};
+
+if (callChatForm) {
+    callChatForm.addEventListener('submit', async (e) => {
+        e.preventDefault();
+        const text = callChatInput.value.trim();
+        if (text && isConnected) {
+            
+            // Re-use logic from main form
+            const encryptionActive = !!sharedSecretKey;
+             let payload = { text };
+            
+            if (encryptionActive) {
+                try {
+                    const encrypted = await encryptMessage(text);
+                    payload = { encrypted };
+                    window.addMessage('You', text, 'me', randomMessages); 
+                } catch (e) {
+                     window.addMessage('You', text, 'me', randomMessages);
+                }
+            } else {
+                 window.addMessage('You', text, 'me', randomMessages);
+            }
+
+            socket.emit('message', payload);
+            callChatInput.value = '';
+        }
+    });
+}
+
 // --- Sounds ---
 let ringInterval;
-// AudioContext needs user interaction first, usually.
 let audioCtx; 
 
 function initAudio() {

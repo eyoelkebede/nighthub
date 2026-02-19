@@ -180,8 +180,13 @@ body {
 .app-container { display: flex; flex-direction: column; height: 100%; position: relative; z-index: 1; }
 
 .status-bar {
-    height: 48px; display: flex; align-items: center; justify-content: space-between; padding: 0 20px;
+    height: 48px; 
+    display: flex; 
+    align-items: center; 
+    justify-content: space-between; /* This handles Time (left), Logo (center - if 3 items), Actions (right) */
+    padding: 0 20px;
     font-size: 14px; font-weight: 500; background: rgba(0,0,0,0.2); backdrop-filter: blur(10px); z-index: 100;
+    position: relative; /* Ensure absolute children are relative to header */
 }
 .logo-pill { background: rgba(255,255,255,0.1); padding: 4px 12px; border-radius: 20px; font-size: 12px; font-weight: 700; backdrop-filter: blur(5px); }
 .online-pill { font-size: 12px; color: var(--accent-success); opacity: 0.8; }
@@ -1499,6 +1504,8 @@ main {
   max-width: 80%;
 }
 
+/* Duplicate status-bar removed - using the main definition at top of file */
+/* 
 .status-bar {
     position: absolute;
     top: 0;
@@ -1511,7 +1518,8 @@ main {
     background-color: rgba(0,0,0,0.3);
     backdrop-filter: blur(5px);
     z-index: 10;
-}
+} 
+*/
 
 /* Controls */
 .controls {
@@ -3075,3 +3083,340 @@ video {
     text-shadow: 0 0 20px rgba(255, 255, 255, 0.3);
 } 
 
+
+/* --- Audio Call / Island Mode --- */
+.call-overlay.audio-mode {
+    top: 10px;
+    left: 50%;
+    transform: translateX(-50%);
+    width: 95%;
+    max-width: 400px;
+    height: auto;
+    min-height: 80px;
+    border-radius: 40px;
+    background: rgba(0, 0, 0, 0.85);
+    backdrop-filter: blur(20px);
+    -webkit-backdrop-filter: blur(20px);
+    box-shadow: 0 10px 40px rgba(0,0,0,0.5);
+    display: flex;
+    flex-direction: row; /* Horizontal layout for island */
+    align-items: center;
+    justify-content: space-between;
+    padding: 10px 20px;
+    z-index: 5000;
+}
+
+.call-overlay.audio-mode #remote-video,
+.call-overlay.audio-mode #local-video-container {
+    display: none !important; 
+}
+
+/* Hide status text in audio island if it takes too much space, or style it */
+.call-overlay.audio-mode .call-status {
+    position: static;
+    transform: none;
+    font-size: 14px;
+    margin: 0;
+    flex-grow: 1;
+    text-align: left;
+    padding-left: 10px;
+}
+
+.call-overlay.audio-mode .call-controls-bar {
+    position: static;
+    transform: none;
+    background: transparent;
+    padding: 0;
+    gap: 10px;
+    width: auto;
+}
+
+.call-overlay.audio-mode .control-btn {
+    width: 40px;
+    height: 40px;
+    background: rgba(255,255,255,0.15);
+}
+
+/* --- In-Call Chat Overlay --- */
+.call-chat-layer {
+    position: absolute;
+    bottom: 0;
+    left: 0;
+    width: 100%;
+    height: 50%; /* Max height half screen */
+    background: linear-gradient(to top, rgba(0,0,0,0.8) 0%, rgba(0,0,0,0) 100%);
+    display: flex;
+    flex-direction: column;
+    justify-content: flex-end;
+    padding-bottom: 100px; /* Space for controls */
+    z-index: 200;
+    pointer-events: none; /* Let clicks pass through empty areas */
+}
+
+.call-chat-layer.hidden {
+    display: none !important;
+}
+
+.call-chat-messages {
+    flex-grow: 1;
+    overflow-y: auto;
+    padding: 20px;
+    mask-image: linear-gradient(to bottom, transparent, black 20%);
+    -webkit-mask-image: linear-gradient(to bottom, transparent, black 20%);
+    pointer-events: auto;
+}
+
+.call-chat-input-area {
+    display: flex;
+    padding: 10px 20px;
+    gap: 10px;
+    pointer-events: auto;
+}
+
+#call-chat-input {
+    flex-grow: 1;
+    background: rgba(255,255,255,0.15);
+    border: 1px solid rgba(255,255,255,0.2);
+    border-radius: 20px;
+    padding: 10px 15px;
+    color: white;
+    outline: none;
+    backdrop-filter: blur(10px);
+}
+
+#call-chat-send-btn {
+    background: var(--accent-blue);
+    border: none;
+    border-radius: 50%;
+    width: 40px;
+    height: 40px;
+    color: white;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+/* Shift Text/Bubbles for Transparency */
+.call-chat-messages .message {
+    background: rgba(40, 40, 40, 0.6); /* More transparent */
+    backdrop-filter: blur(5px);
+    border: 1px solid rgba(255,255,255,0.1);
+    color: white;
+    text-shadow: 1px 1px 2px rgba(0,0,0,0.8);
+    margin-bottom: 8px;
+    max-width: 80%;
+}
+.call-chat-messages .message.you {
+    background: rgba(10, 132, 255, 0.6); /* Blue transparent */
+}
+
+/* Chat Active State Modifiers */
+/* When chat is open, move controls and local video to top */
+.call-overlay.chat-open .call-controls-bar {
+    top: 60px; /* Below standard header area */
+    bottom: auto;
+    position: absolute;
+    transform: translateX(-50%);
+    /* Make controls smaller or horizontal strip at top */
+    padding: 8px;
+    gap: 8px;
+}
+
+.call-overlay.chat-open .local-view-container {
+    top: 130px; /* Below top controls */
+    bottom: auto;
+    right: 20px;
+}
+
+/* --- Light Theme Variables --- */
+body.light-theme {
+    --bg-color: #f2f2f7;
+    --text-primary: #000000;
+    --text-secondary: rgba(60, 60, 67, 0.6);
+    --glass-bg: rgba(255, 255, 255, 0.75);
+    --glass-border: rgba(0, 0, 0, 0.1);
+    --system-bg: #ffffff;
+    --system-secondary-bg: #e5e5ea;
+    --msg-gray: #e5e5ea;
+}
+
+body.light-theme .orb {
+    opacity: 0.5;
+    filter: blur(80px) saturate(150%);
+}
+
+body.light-theme canvas {
+    opacity: 0.6; /* Dim the starfield on light mode */
+}
+
+body.light-theme .glass-panel,
+body.light-theme .glass-card,
+body.light-theme .glass-input,
+body.light-theme .glass-input-lg,
+body.light-theme .control-center {
+    background: rgba(255, 255, 255, 0.65);
+    border: 1px solid rgba(0, 0, 0, 0.05);
+    color: black;
+}
+
+body.light-theme .glass-input::placeholder,
+body.light-theme .glass-input-lg::placeholder {
+    color: rgba(60, 60, 67, 0.5);
+}
+
+body.light-theme .message .msg-text {
+    color: black;
+}
+
+body.light-theme .message.you .msg-text,
+body.light-theme .message.you .delivery-status {
+    color: white;
+}
+
+body.light-theme #ambient-bg {
+    background: #f2f2f7;
+}
+
+/* --- Control Center (Dropdown) --- */
+.header-right {
+    /* Position relative/flex in flow to work nicely with status-bar flex layout */
+    display: flex; 
+    align-items: center;
+    /* remove absolute positioning so flexbox space-between works */
+}
+
+.control-center {
+    position: absolute;
+    top: 50px;
+    right: 16px;
+    width: 260px;
+    background: rgba(30, 30, 30, 0.85); /* Default dark glass */
+    backdrop-filter: blur(30px);
+    -webkit-backdrop-filter: blur(30px);
+    border-radius: 24px;
+    padding: 16px;
+    z-index: 3000;
+    border: 1px solid var(--glass-border);
+    box-shadow: 0 10px 40px rgba(0,0,0,0.3);
+    flex-direction: column;
+    gap: 12px;
+    display: flex;
+    transform-origin: top right;
+    transition: all 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+    opacity: 1;
+    transform: scale(1);
+    display: flex !important;
+}
+
+.control-center.hidden {
+    opacity: 0;
+    transform: scale(0.9);
+    pointer-events: none;
+    visibility: hidden; 
+}
+
+.control-group {
+    background: rgba(255, 255, 255, 0.08);
+    border-radius: 16px;
+    padding: 2px;
+    overflow: hidden;
+}
+body.light-theme .control-group {
+    background: rgba(0,0,0,0.05);
+}
+
+.control-item {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 12px 14px;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+}
+body.light-theme .control-item {
+    border-bottom: 1px solid rgba(0, 0, 0, 0.05);
+}
+
+.control-item:last-child {
+    border-bottom: none;
+}
+
+.control-label {
+    font-size: 15px;
+    font-weight: 500;
+}
+
+.control-btn-full {
+    width: 100%;
+    padding: 12px;
+    background: transparent;
+    border: none;
+    color: var(--text-primary);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    font-size: 15px;
+    font-weight: 600;
+    cursor: pointer;
+}
+.control-btn-full.danger {
+    color: var(--accent-danger);
+}
+.user-id-mini {
+    text-align: center;
+    font-size: 11px;
+    color: var(--text-secondary);
+    padding-bottom: 8px;
+}
+
+/* Toggle Switch Style */
+.switch {
+  position: relative;
+  display: inline-block;
+  width: 46px;
+  height: 28px;
+}
+.switch input { opacity: 0; width: 0; height: 0; }
+.slider {
+  position: absolute;
+  cursor: pointer;
+  top: 0; left: 0; right: 0; bottom: 0;
+  background-color: rgba(120, 120, 128, 0.32);
+  transition: .4s;
+}
+.slider:before {
+  position: absolute;
+  content: "";
+  height: 24px;
+  width: 24px;
+  left: 2px;
+  bottom: 2px;
+  background-color: white;
+  transition: .4s;
+  box-shadow: 0 2px 4px rgba(0,0,0,0.2);
+}
+input:checked + .slider {
+  background-color: var(--accent-success); /* Green for on */
+}
+input:checked + .slider:before {
+  transform: translateX(18px);
+}
+.slider.round {
+  border-radius: 34px;
+}
+.slider.round:before {
+  border-radius: 50%;
+}
+
+/* Audio Call Island Theme & Visibility Override */
+.call-overlay.audio-mode {
+    background: #1c1c1e !important; /* Always dark gray/blueish */
+    border: 1px solid rgba(255, 255, 255, 0.15);
+    box-shadow: 0 10px 40px rgba(0,0,0,0.6);
+}
+
+/* Light theme adaptation for audio island to stand out more */
+body.light-theme .call-overlay.audio-mode {
+    background: #000000 !important; /* Pitch black on light theme for high contrast */
+    color: white;
+}
